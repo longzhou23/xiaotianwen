@@ -73,13 +73,13 @@ ${BACKUP_ROOT:-$PROJECT_ROOT/backups}/current/
 ## 管理入口与日志
 
 - AstrBot Dashboard：`http://服务器地址:6200`
-- SnowLuma WebUI：宿主机回环地址 `127.0.0.1:5099`
-- SnowLuma noVNC：宿主机回环地址 `127.0.0.1:6081`
+- SnowLuma WebUI：`http://服务器地址:5099`
+- SnowLuma noVNC：`http://服务器地址:6081`
 - AstrBot OneBot 反向 WebSocket：端口 `8001`
 - AstrBot 日志：`logs/astrbot.log`
 - SnowLuma 日志：`docker logs -f snowluma`
 
-SnowLuma 的 5099 和 6081 端口当前只绑定在宿主机回环地址。需要从其他机器访问时，应使用 SSH 端口转发，不建议直接暴露到局域网或公网。
+当前部署默认将 AstrBot、SnowLuma WebUI、noVNC 和 OneBot 端口绑定到 `0.0.0.0`，可从服务器的局域网地址访问。若要恢复为仅本机访问，可在 Compose 环境中设置 `ASTRBOT_BIND_HOST=127.0.0.1` 和 `SNOWLUMA_BIND_HOST=127.0.0.1`。将端口暴露到公网前，应先配置主机防火墙、Cloudflare Access 或其他认证层。
 
 ## 迁移要点
 

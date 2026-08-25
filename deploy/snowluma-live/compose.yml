@@ -23,8 +23,8 @@ services:
       SNOWLUMA_QQ_FLAGS: "--disable-gpu --disable-software-rasterizer --disable-gpu-compositing"
       TZ: Asia/Shanghai
     ports:
-      - "127.0.0.1:6081:6081"
-      - "127.0.0.1:5099:5099"
+      - "${SNOWLUMA_BIND_HOST:-0.0.0.0}:6081:6081"
+      - "${SNOWLUMA_BIND_HOST:-0.0.0.0}:5099:5099"
     volumes:
       - ./start-no-vnc-password.sh:/root/start.sh:ro
       - ${SNOWLUMA_DATA_DIR:-../../../runtime/snowluma/data}:/app/data

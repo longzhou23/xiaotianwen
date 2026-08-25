@@ -7,8 +7,8 @@ services:
       TZ: Asia/Shanghai
       PYTHONUNBUFFERED: "1"
     ports:
-      - "127.0.0.1:${ASTRBOT_DASHBOARD_PORT:-6200}:6200"
-      - "127.0.0.1:${ASTRBOT_ONEBOT_PORT:-8001}:8001"
+      - "${ASTRBOT_BIND_HOST:-0.0.0.0}:${ASTRBOT_DASHBOARD_PORT:-6200}:6200"
+      - "${ASTRBOT_BIND_HOST:-0.0.0.0}:${ASTRBOT_ONEBOT_PORT:-8001}:8001"
     volumes:
       - ${ASTRBOT_DATA_DIR:-../../../runtime/astrobot/data}:/AstrBot/data
       - /etc/localtime:/etc/localtime:ro
