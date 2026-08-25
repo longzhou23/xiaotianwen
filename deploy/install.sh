@@ -6,7 +6,6 @@ source "$SCRIPT_DIR/common-deploy.sh"
 require_linux
 require_layout
 need git
-need rsync
 need python3
 
 INSTALL_SYSTEM_DEPS=${INSTALL_SYSTEM_DEPS:-0}
@@ -15,6 +14,8 @@ if [[ "$INSTALL_SYSTEM_DEPS" == 1 ]]; then
   sudo apt-get update
   sudo apt-get install -y ca-certificates git rsync python3 python3-venv python3-pip docker.io docker-compose-plugin
 fi
+
+need rsync
 
 mkdir -p "$RUNTIME_DIR" "$RUNTIME_DIR/astrobot/data" "$RUNTIME_DIR/snowluma/data"
 
