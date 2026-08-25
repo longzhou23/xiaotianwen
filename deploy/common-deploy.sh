@@ -8,6 +8,7 @@ PRIVATE_DIR=${PRIVATE_DIR:-$PROJECT_ROOT/private}
 RUNTIME_DIR=${RUNTIME_DIR:-$PROJECT_ROOT/runtime}
 SECRET_FILE=${SECRET_FILE:-/etc/xiaotianwen/secrets.env}
 BACKUP_ROOT=${BACKUP_ROOT:-$PROJECT_ROOT/backups}
+IMAGE_CONFIG_FILE=${IMAGE_CONFIG_FILE:-$PROJECT_ROOT/host-images.env}
 
 umask 077
 
@@ -33,6 +34,25 @@ copy_tree() {
   local source=$1 target=$2
   mkdir -p "$target"
   cp -a "$source"/. "$target"/
+}
+
+load_image_overrides() {
+  [[ -f "$IMAGE_CONFIG_FILE" ]] || return 0
+  local key value
+  while IFS='=' read -r key value || [[ -n "$key" ]]; do
+    key=${key//[[:space:]]/}
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    case "$key" in
+      ASTRBOT_IMAGE|SNOWLUMA_IMAGE)
+        [[ "$value" =~ ^[A-Za-z0-9._/:@-]+$ ]] || die "invalid image value in $IMAGE_CONFIG_FILE: $key"
+        export "$key=$value"
+        ;;
+      *)
+        die "unsupported key in $IMAGE_CONFIG_FILE: $key"
+        ;;
+    esac
+  done <"$IMAGE_CONFIG_FILE"
+  log "loaded container image overrides from $IMAGE_CONFIG_FILE"
 }
 
 clone_with_optional_token() {

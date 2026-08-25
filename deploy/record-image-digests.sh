@@ -9,6 +9,10 @@ docker info >/dev/null 2>&1 || die 'Docker daemon is unavailable'
 ASTRBOT_IMAGE=${ASTRBOT_IMAGE:-soulter/astrbot:latest}
 SNOWLUMA_IMAGE=${SNOWLUMA_IMAGE:-motricseven7/snowluma:latest}
 OUTPUT_FILE=${IMAGE_RECORD_FILE:-$RUNTIME_DIR/deployed-images.env}
+load_image_overrides
+
+ASTRBOT_IMAGE=${ASTRBOT_IMAGE:-soulter/astrbot:latest}
+SNOWLUMA_IMAGE=${SNOWLUMA_IMAGE:-motricseven7/snowluma:latest}
 
 image_id() {
   docker image inspect --format '{{.Id}}' "$1"

@@ -34,6 +34,14 @@ bash deploy/update.sh
 
 该命令会先拉取官方 `latest` 镜像，再重建两个容器并记录实际 image digest；普通 Docker/服务重启不执行镜像拉取。
 
+若目标网络无法访问 Docker Hub，可在项目根目录创建 `host-images.env`，仅覆盖镜像的拉取路径而不改变 `latest` 更新策略：
+
+```bash
+cp deploy/host-images.env.example ../host-images.env
+```
+
+该文件是宿主网络配置，不含密钥，也不应提交到 public 仓库。
+
 ## 更新与备份
 
 ```bash

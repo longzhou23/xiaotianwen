@@ -13,6 +13,7 @@ docker compose version >/dev/null 2>&1 || die 'Docker Compose v2 is unavailable'
 # deliberately does, because AstrBot and SnowLuma are configured to follow
 # their upstream latest images.
 "$SCRIPT_DIR/install.sh"
+load_image_overrides
 
 export ASTRBOT_IMAGE=${ASTRBOT_IMAGE:-soulter/astrbot:latest}
 export SNOWLUMA_IMAGE=${SNOWLUMA_IMAGE:-motricseven7/snowluma:latest}
