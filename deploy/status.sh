@@ -15,14 +15,15 @@ case "$target" in
   *) die "usage: status.sh [all|astrbot|snowluma]" ;;
 esac
 
-printf 'NAME\tSTATE\tHEALTH\tRESTARTS\n'
+printf '%-12s %-10s %-10s %s\n' NAME STATE HEALTH RESTARTS
 for container in "${containers[@]}"; do
   if ! docker inspect "$container" >/dev/null 2>&1; then
-    printf '%s\t%s\t%s\t%s\n' "$container" absent - -
+    printf '%-12s %-10s %-10s %s\n' "$container" absent - -
     continue
   fi
-  docker inspect "$container" --format '{{.Name}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t{{.RestartCount}}' \
-    | sed 's#^/##'
+  docker inspect "$container" --format '{{.Name}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.RestartCount}}' \
+    | sed 's#^/##' \
+    | awk '{printf "%-12s %-10s %-10s %s\n", $1, $2, $3, $4}'
 done
 
 if [[ "$target" == all || "$target" == astrbot ]]; then
