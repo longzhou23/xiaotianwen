@@ -3,6 +3,9 @@ services:
     image: ${SNOWLUMA_IMAGE:-motricseven7/snowluma:latest}
     container_name: snowluma
     restart: unless-stopped
+    # The official image entrypoint runs non-executable commands through Node.
+    # The bind-mounted compatibility script is intentionally invoked by Bash.
+    command: ["bash", "/root/start.sh"]
     shm_size: 1gb
     cap_add:
       - SYS_PTRACE
