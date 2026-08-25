@@ -36,3 +36,4 @@ gateway/**/.w3m/
 deploy/**/.env
 deploy/**/.env.*
 !deploy/**/.env.example
+.host-secrets/

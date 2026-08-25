@@ -10,6 +10,14 @@ SECRET_FILE=${SECRET_FILE:-/etc/xiaotianwen/secrets.env}
 BACKUP_ROOT=${BACKUP_ROOT:-$PROJECT_ROOT/backups}
 IMAGE_CONFIG_FILE=${IMAGE_CONFIG_FILE:-$PROJECT_ROOT/host-images.env}
 
+# A user-owned fallback keeps a non-root deployment usable while keeping
+# credentials outside both Git repositories. The conventional /etc path still
+# wins whenever it exists.
+if [[ "$SECRET_FILE" == /etc/xiaotianwen/secrets.env && ! -f "$SECRET_FILE" ]]; then
+  host_secret_fallback="$PROJECT_ROOT/.host-secrets/secrets.env"
+  [[ -f "$host_secret_fallback" ]] && SECRET_FILE="$host_secret_fallback"
+fi
+
 umask 077
 
 log() { printf '%s [deploy] %s\n' "$(date '+%F %T')" "$*"; }

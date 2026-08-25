@@ -22,6 +22,16 @@ sudo install -m 600 /dev/null "$SECRET_FILE"
 bash deploy/bootstrap.sh
 ```
 
+OneBot 反向 WebSocket 的凭据也放在这个主机私有文件中（只写变量名，不要提交到仓库）：
+
+```ini
+SECRET_WS_REVERSE_TOKEN=由部署机生成的随机长令牌
+SECRET_ACCESSTOKEN=与上面相同的令牌
+```
+
+如果没有 root 权限，可将同一格式的文件保存为
+`$PROJECT_ROOT/.host-secrets/secrets.env`，并执行 `chmod 600`；部署脚本会自动使用它。脚本只会把占位符写入运行时配置，不会在日志中打印令牌。
+
 若目标机已经预装依赖，可显式设置 `INSTALL_SYSTEM_DEPS=0`。脚本不会把 `GITHUB_TOKEN` 写入 remote URL；克隆完成后临时 `ASKPASS` 文件会被清理。
 
 ## 启动与更新

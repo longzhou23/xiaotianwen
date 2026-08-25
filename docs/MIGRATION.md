@@ -46,6 +46,11 @@ grep -RInE '(^|[=:])[[:space:]]*(sk-|eyJ|-----BEGIN|[A-Za-z0-9]{24,})' \
   public private --exclude='*.db*' --exclude='train_data.json'
 ```
 
+OneBot 反向 WebSocket 的 `SECRET_WS_REVERSE_TOKEN` 与
+`SECRET_ACCESSTOKEN` 必须在该主机私有文件中配置为同一个随机令牌。若无法写入
+`/etc/xiaotianwen/secrets.env`，可使用 `$PROJECT_ROOT/.host-secrets/secrets.env`
+（权限 600）；部署脚本会在恢复 AstrBot/SnowLuma 配置时解析所有 `onebot*.json`。
+
 命令只用于发现误提交风险；QQ 图片文件 ID、测试用假值和已脱敏的 `${SECRET_*}` 占位符需要人工复核，不能把扫描结果直接当成泄露。
 
 ## 验收清单

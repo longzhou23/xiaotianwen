@@ -40,6 +40,55 @@ if [[ -d "$PRIVATE_DIR/instance/qq-data" ]]; then
   rsync -a "$PRIVATE_DIR/instance/qq-data"/ "$RUNTIME_DIR/snowluma/qq-data"/
 fi
 
+# Resolve only the OneBot credentials that are intentionally represented as
+# placeholders in the private instance configuration. Keep the real values in
+# the host-only secret file; never commit them to either repository.
+apply_runtime_secrets() {
+  [[ -f "$SECRET_FILE" ]] || return 0
+
+  # shellcheck disable=SC1090
+  set -a
+  source "$SECRET_FILE"
+  set +a
+
+  export SECRET_WS_REVERSE_TOKEN="${SECRET_WS_REVERSE_TOKEN:-}"
+  export SECRET_ACCESSTOKEN="${SECRET_ACCESSTOKEN:-}"
+
+  python3 - \
+    "$RUNTIME_DIR/astrobot/data/cmd_config.json" \
+    "$RUNTIME_DIR/snowluma/data/config" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+replacements = {
+    "${SECRET_WS_REVERSE_TOKEN}": os.environ.get("SECRET_WS_REVERSE_TOKEN", ""),
+    "${SECRET_ACCESSTOKEN}": os.environ.get("SECRET_ACCESSTOKEN", ""),
+}
+
+paths = [Path(sys.argv[1])]
+config_dir = Path(sys.argv[2])
+if config_dir.is_dir():
+    paths.extend(sorted(config_dir.glob("onebot*.json")))
+
+for raw_path in paths:
+    path = Path(raw_path)
+    if not path.is_file():
+        continue
+    text = path.read_text(encoding="utf-8-sig")
+    updated = text
+    for placeholder, value in replacements.items():
+        if value:
+            updated = updated.replace(placeholder, value)
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+PY
+
+  log 'runtime OneBot secret placeholders resolved from host secret file'
+}
+
+apply_runtime_secrets
+
 mkdir -p "$RUNTIME_DIR/astrobot/data/plugins"
 LOCK_FILE="$PRIVATE_DIR/plugins.lock.yaml"
 [[ -f "$LOCK_FILE" ]] || die "plugin lock not found: $LOCK_FILE"
