@@ -35,6 +35,41 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   fi
 fi
 
+# AstrBot runs as root and can leave cmd_config.json or plugin config files
+# mode 600 after shutdown. A non-root deploy user cannot read those bind-mounted
+# files directly, but Docker can copy them out of the stopped container. Import
+# only the configuration files that the renderer must inspect; databases and
+# user data remain untouched.
+import_stopped_runtime_configs() {
+  command -v docker >/dev/null 2>&1 || return 0
+  docker info >/dev/null 2>&1 || return 0
+  docker inspect astrbot >/dev/null 2>&1 || return 0
+  [[ "$(docker inspect -f '{{.State.Running}}' astrbot 2>/dev/null || true)" == false ]] || return 0
+
+  local target relative temp_dir basename
+  local targets=("$RUNTIME_DIR/astrobot/data/cmd_config.json")
+  while IFS= read -r -d '' target; do
+    targets+=("$target")
+  done < <(find "$RUNTIME_DIR/astrobot/data/config" -maxdepth 1 -type f -name '*.json' ! -readable -print0 2>/dev/null)
+
+  for target in "${targets[@]}"; do
+    [[ -f "$target" && ! -r "$target" ]] || continue
+    relative=${target#"$RUNTIME_DIR/astrobot/data"}
+    basename=$(basename -- "$target")
+    temp_dir=$(mktemp -d)
+    if ! docker cp "astrbot:/AstrBot/data$relative" "$temp_dir/" >/dev/null; then
+      rm -rf "$temp_dir"
+      die "cannot read deployment-managed config from stopped astrbot container: $relative"
+    fi
+    chmod 600 "$temp_dir/$basename"
+    mv -f "$temp_dir/$basename" "$target"
+    rmdir "$temp_dir" 2>/dev/null || true
+    log "imported root-owned config through stopped astrbot container: $relative"
+  done
+}
+
+import_stopped_runtime_configs
+
 mkdir -p \
   "$RUNTIME_DIR" \
   "$DEPLOY_STATE_DIR" \
