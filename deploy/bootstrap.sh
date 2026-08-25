@@ -15,7 +15,8 @@ PRIVATE_REPO_URL=${PRIVATE_REPO_URL:-}
 export INSTALL_SYSTEM_DEPS=${INSTALL_SYSTEM_DEPS:-1}
 if [[ "$INSTALL_SYSTEM_DEPS" == 1 ]]; then
   sudo apt-get update
-  sudo apt-get install -y ca-certificates git rsync python3 python3-venv python3-pip docker.io docker-compose-plugin
+  # Ubuntu 24.04 官方源使用 docker-compose-v2；docker-compose-plugin 是 Docker 官方源的包名。
+  sudo apt-get install -y ca-certificates git rsync python3 python3-venv python3-pip docker.io docker-compose-v2
 fi
 need git
 
