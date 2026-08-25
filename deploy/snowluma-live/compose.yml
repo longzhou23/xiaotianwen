@@ -1,6 +1,6 @@
 services:
   snowluma:
-    image: ${SNOWLUMA_IMAGE:-snowluma-local:v1.14.13}
+    image: ${SNOWLUMA_IMAGE:-motricseven7/snowluma:latest}
     container_name: snowluma
     restart: unless-stopped
     shm_size: 1gb
@@ -24,6 +24,6 @@ services:
       - "127.0.0.1:5099:5099"
     volumes:
       - ./start-no-vnc-password.sh:/root/start.sh:ro
-      - ${SNOWLUMA_DATA_DIR:-../../../../private/instance/snowluma-data/data}:/app/data
-      - ${QQ_CONFIG_DIR:-../../../../private/instance/qq-config}:/app/.config/QQ
-      - ${QQ_DATA_DIR:-../../../../private/instance/qq-data}:/app/.local/share
+      - ${SNOWLUMA_DATA_DIR:-../../../runtime/snowluma/data}:/app/data
+      - ${QQ_CONFIG_DIR:-../../../runtime/snowluma/qq-config}:/app/.config/QQ
+      - ${QQ_DATA_DIR:-../../../runtime/snowluma/qq-data}:/app/.local/share

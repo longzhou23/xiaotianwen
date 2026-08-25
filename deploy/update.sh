@@ -12,4 +12,4 @@ for repo in "$PUBLIC_DIR" "$PRIVATE_DIR"; do
   git -C "$repo" pull --ff-only
 done
 
-exec "$PUBLIC_DIR/deploy/install.sh"
+exec "$PUBLIC_DIR/deploy/up-latest.sh"

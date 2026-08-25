@@ -19,7 +19,12 @@ fi
 
 need rsync
 
-mkdir -p "$RUNTIME_DIR" "$RUNTIME_DIR/astrobot/data" "$RUNTIME_DIR/snowluma/data"
+mkdir -p \
+  "$RUNTIME_DIR" \
+  "$RUNTIME_DIR/astrobot/data" \
+  "$RUNTIME_DIR/snowluma/data" \
+  "$RUNTIME_DIR/snowluma/qq-config" \
+  "$RUNTIME_DIR/snowluma/qq-data"
 
 # 实例数据恢复不使用 --delete，避免覆盖目标机上未纳入仓库的文件。
 if [[ -d "$PRIVATE_DIR/instance/astrobot-data" ]]; then
@@ -27,6 +32,12 @@ if [[ -d "$PRIVATE_DIR/instance/astrobot-data" ]]; then
 fi
 if [[ -d "$PRIVATE_DIR/instance/snowluma-data/data" ]]; then
   rsync -a "$PRIVATE_DIR/instance/snowluma-data/data"/ "$RUNTIME_DIR/snowluma/data"/
+fi
+if [[ -d "$PRIVATE_DIR/instance/qq-config" ]]; then
+  rsync -a "$PRIVATE_DIR/instance/qq-config"/ "$RUNTIME_DIR/snowluma/qq-config"/
+fi
+if [[ -d "$PRIVATE_DIR/instance/qq-data" ]]; then
+  rsync -a "$PRIVATE_DIR/instance/qq-data"/ "$RUNTIME_DIR/snowluma/qq-data"/
 fi
 
 mkdir -p "$RUNTIME_DIR/astrobot/data/plugins"
@@ -68,4 +79,4 @@ else
 fi
 
 log "installation layout prepared under $PROJECT_ROOT"
-log "AstrBot core installation and systemd registration require explicit target-version confirmation"
+log "runtime will use the official latest AstrBot and SnowLuma container images"
