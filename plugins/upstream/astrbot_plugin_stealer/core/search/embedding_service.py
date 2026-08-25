@@ -8,6 +8,7 @@
 """
 
 import json
+import time
 from typing import Any
 
 import numpy as np
@@ -33,6 +34,10 @@ class EmbeddingService:
 
         # Provider 负缓存：同一配置下未找到时不再重复探测/打印日志
         self._provider_not_found: bool = False
+        self._provider_not_found_at: float = 0.0
+        # AstrBot 会在插件加载后再初始化 provider。负缓存只能短暂抑制
+        # 重复日志，不能把启动时序误判永久化。
+        self.PROVIDER_RETRY_INTERVAL = 10.0
         self._last_enable_embedding_search: bool | None = None
         self._last_embedding_provider_id: str | None = None
 
@@ -65,6 +70,7 @@ class EmbeddingService:
             self._provider = None
             self._provider_dim = 0
             self._provider_not_found = False
+            self._provider_not_found_at = 0.0
             self._faiss_available = None
             self._faiss_db = None
             self.invalidate_cache()
@@ -82,9 +88,12 @@ class EmbeddingService:
         if self._provider is not None:
             return self._provider
 
-        # 负缓存：同一配置下已确认无 provider，直接返回避免重复日志
+        # 短暂负缓存：AstrBot 的 provider manager 可能晚于插件初始化。
+        # 到期后重新探测，避免启动时序导致嵌入检索永久失效。
         if self._provider_not_found:
-            return None
+            if time.monotonic() - self._provider_not_found_at < self.PROVIDER_RETRY_INTERVAL:
+                return None
+            self._provider_not_found = False
 
         provider_id = getattr(self.plugin, "embedding_provider_id", None) or ""
 
@@ -120,7 +129,13 @@ class EmbeddingService:
 
         logger.info("[Embedding] 未找到 Embedding Provider，嵌入检索不可用")
         self._provider_not_found = True
+        self._provider_not_found_at = time.monotonic()
         return None
+
+    def reset_provider_probe(self) -> None:
+        """清除 provider 负缓存，供启动后延迟重试使用。"""
+        self._provider_not_found = False
+        self._provider_not_found_at = 0.0
 
     def _find_provider_by_id(self, provider_id: str) -> Any | None:
         """按 ID 查找 provider（对齐 livingmemory 的静默查找模式）。"""

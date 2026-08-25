@@ -1362,11 +1362,19 @@ class Main(Star):
                 try:
                     smart_service = getattr(self.meme_selector, "_smart_select_service", None)
                     if smart_service and smart_service._embedding_service:
-                        await smart_service._embedding_service.initialize()
+                        embedding_service = smart_service._embedding_service
+                        await embedding_service.initialize()
                         # 同步回填旧数据（分批处理，每批 20 条）
-                        backfilled = await smart_service._embedding_service.backfill_existing(batch_size=20)
+                        backfilled = await embedding_service.backfill_existing(batch_size=20)
                         if backfilled > 0:
                             logger.info(f"[Embedding] 旧数据回填完成: {backfilled} 条新向量")
+                        # AstrBot 4.27.x 在插件之后加载 provider。若启动时 provider
+                        # 尚未出现，延迟重试一次，避免 API key 已有效但嵌入检索仍永久关闭。
+                        if embedding_service._get_provider() is None:
+                            self._embedding_retry_task = self._safe_create_task(
+                                self._retry_embedding_initialization(embedding_service),
+                                name="embedding_provider_retry",
+                            )
                 except Exception as e:
                     logger.warning(f"[Embedding] 初始化失败: {e}")
 
@@ -1375,11 +1383,39 @@ class Main(Star):
             logger.error(f"初始化插件失败: {e}")
             raise
 
+    async def _retry_embedding_initialization(self, embedding_service):
+        """等待 AstrBot provider manager 完成初始化后重试嵌入服务。"""
+        for delay in (8, 12, 20):
+            try:
+                await asyncio.sleep(delay)
+                embedding_service.reset_provider_probe()
+                await embedding_service.initialize()
+                if embedding_service._get_provider() is None:
+                    continue
+                backfilled = await embedding_service.backfill_existing(batch_size=20)
+                logger.info(
+                    "[Embedding] provider 延迟初始化成功，旧数据回填 %s 条",
+                    backfilled,
+                )
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("[Embedding] provider 延迟初始化失败，将继续重试: %s", e)
+        logger.warning("[Embedding] provider 延迟初始化仍未成功，请检查 AstrBot Embedding 配置")
+
     async def terminate(self):
         """插件销毁生命周期钩子。"""
         if self._terminated:
             return
         self._terminated = True
+        retry_task = getattr(self, "_embedding_retry_task", None)
+        if retry_task is not None:
+            retry_task.cancel()
+            try:
+                await retry_task
+            except (asyncio.CancelledError, Exception):
+                pass
         try:
             await self.task_scheduler.cancel_task("raw_cleanup_loop")
             await self.task_scheduler.cancel_task("capacity_control_loop")
