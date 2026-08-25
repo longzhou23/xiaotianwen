@@ -47,6 +47,18 @@ Ubuntu 仓库的 Compose 包名会按 `docker-compose-v2`、`docker-compose-plug
 bash deploy/update.sh
 ```
 
+日常服务控制使用以下入口；参数可以是 `all`、`astrbot` 或 `snowluma`，省略时默认为 `all`：
+
+```bash
+bash deploy/start.sh all       # 启动两个服务
+bash deploy/stop.sh snowluma   # 只停止 SnowLuma
+bash deploy/restart.sh astrbot # 只重启 AstrBot
+bash deploy/status.sh all      # 查看容器、重启次数和端口状态
+```
+
+`start.sh` 使用 Compose 恢复已有容器，不会主动拉取 latest 镜像；需要升级镜像时使用
+`update.sh`。`stop.sh` 会给服务 30 秒优雅退出时间。
+
 该命令会先拉取官方 `latest` 镜像，再重建两个容器并记录实际 image digest；普通 Docker/服务重启不执行镜像拉取。
 
 实例恢复与日常更新已经分离：
