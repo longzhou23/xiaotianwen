@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_NAME=run-astrbot
+source "$(dirname "$0")/common.sh"
+
+ensure_astrbot_layout
+clear_proxy_env
+
+# 仅供 AstrBot 的可选 models.dev 元数据请求使用；主模型和 OneBot 仍保持直连。
+export ASTRBOT_LLM_METADATA_PROXY="${ASTRBOT_LLM_METADATA_PROXY:-http://127.0.0.1:7890}"
+
+# 防止 OpenAI SDK 在 AstrBot DEBUG 根日志中写入完整请求正文。
+export OPENAI_LOG="${OPENAI_LOG:-info}"
+export PYTHONUNBUFFERED=1
+
+cd "$ASTROBOT_WORKDIR"
+exec "$ASTROBOT_BIN" run

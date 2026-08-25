@@ -1,0 +1,17 @@
+{
+  "enabled": {"description": "启用输出监管", "type": "bool", "default": true},
+  "mode": {"description": "上线模式", "type": "string", "default": "enforce", "options": ["shadow", "warn", "enforce"], "hint": "当前默认 enforce：执行重写或阻断；调试误判时可切回 shadow。"},
+  "review_scope": {"description": "审核范围", "type": "string", "default": "risk_flagged", "options": ["risk_flagged", "all_final_replies"], "hint": "risk_flagged：普通回复走本地快速路径，仅敏感信号调用 AI；all_final_replies：每条最终回复都调用 AI。"},
+  "provider_id": {"description": "监管模型 Provider ID", "type": "string", "default": "deepseek-responses/deepseek-v4-flash", "hint": "使用已在本机配置的独立审核 Provider ID；不会回退到主聊天模型。若迁移到其他服务器，请改为该服务器中存在的 Provider ID。"},
+  "rewrite_provider_id": {"description": "改写与安全拒答模型 Provider ID（可选）", "type": "string", "default": "", "hint": "留空时安全改写和拦截后的自然拒答使用当前会话主模型；审核模型始终使用 provider_id。"},
+  "timeout_seconds": {"description": "单次模型审核超时（秒）", "type": "int", "default": 3},
+  "max_review_tokens": {"description": "审核最大输出 Token", "type": "int", "default": 160},
+  "max_rewrite_tokens": {"description": "单次改写最大输出 Token", "type": "int", "default": 600},
+  "max_context_chars": {"description": "传给审核模型的公开上下文最大字符数", "type": "int", "default": 1600},
+  "max_candidate_chars": {"description": "审核候选回复最大字符数", "type": "int", "default": 6000},
+  "max_rewrite_attempts": {"description": "最多安全改写次数", "type": "int", "default": 1},
+  "review_cache_ttl_seconds": {"description": "相同候选审核缓存秒数", "type": "int", "default": 60},
+  "fail_policy": {"description": "监管不可用时策略", "type": "string", "default": "rule_sensitive", "options": ["rule_sensitive", "fail_closed"], "hint": "rule_sensitive：仅本地硬规则阻断；fail_closed：enforce 下任意审核故障用兜底。"},
+  "disable_streaming": {"description": "关闭流式输出以保证完整文本先审核", "type": "bool", "default": true},
+  "audit_retention_days": {"description": "脱敏审计记录保留天数", "type": "int", "default": 30}
+}

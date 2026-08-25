@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_NAME=start
+source "$(dirname "$0")/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: bin/start [all|astrbot|snowluma]
+
+Start the current xtw_bot services. Default: all.
+EOF
+}
+
+case "${1:-all}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+service=${1:-all}
+[[ $# -le 1 ]] || die "too many arguments"
+validate_service_name "$service"
+ensure_runtime_dirs
+acquire_maintenance_lock
+clear_proxy_env
+
+case "$service" in
+  all)
+    start_astrbot
+    start_snowluma
+    ;;
+  astrbot)
+    start_astrbot
+    ;;
+  snowluma)
+    if ! tcp_open 127.0.0.1 8001; then
+      warn "AstrBot OneBot port 8001 is not listening; SnowLuma will start but cannot deliver events yet"
+    fi
+    start_snowluma
+    ;;
+esac

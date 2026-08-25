@@ -1,0 +1,7 @@
+name: astrbot_plugin_output_audit
+source: local-custom
+source_type: custom
+modified: true
+license: pending-owner-confirmation
+maintainer: xiaotianwen-maintainers
+review_status: local-source

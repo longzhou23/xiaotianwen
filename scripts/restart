@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_NAME=restart
+source "$(dirname "$0")/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: bin/restart [all|astrbot|snowluma]
+
+Restart services and wait for their health endpoints. Default: all.
+EOF
+}
+
+case "${1:-all}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+service=${1:-all}
+[[ $# -le 1 ]] || die "too many arguments"
+validate_service_name "$service"
+ensure_runtime_dirs
+acquire_maintenance_lock
+clear_proxy_env
+
+case "$service" in
+  all)
+    stop_snowluma
+    stop_astrbot
+    start_astrbot
+    start_snowluma
+    ;;
+  astrbot)
+    stop_astrbot
+    start_astrbot
+    ;;
+  snowluma)
+    stop_snowluma
+    start_snowluma
+    ;;
+esac

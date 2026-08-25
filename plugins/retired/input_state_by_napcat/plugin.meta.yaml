@@ -1,0 +1,7 @@
+name: input_state_by_napcat
+source: https://github.com/ctrlkk/astrbot_plugin_input_state_by_nc
+source_type: retired-upstream
+modified: false
+license: see LICENSE in plugin directory
+maintainer: upstream
+review_status: retired-napcat-deprecated

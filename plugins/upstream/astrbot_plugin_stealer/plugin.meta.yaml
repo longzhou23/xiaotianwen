@@ -1,0 +1,7 @@
+name: astrbot_plugin_stealer
+source: https://github.com/nagatoquin33/astrbot_plugin_stealer
+source_type: upstream
+modified: false
+license: see plugin metadata
+maintainer: upstream
+review_status: unverified

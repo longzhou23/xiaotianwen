@@ -1,0 +1,451 @@
+{
+    "metadata": {
+        "display_name": "Emoji Stealer",
+        "short_desc": "Auto-collect and intelligently send stickers",
+        "desc": "Monitors chat images and uses VLM to auto-classify and store them. Intelligently matches and sends stickers based on conversation mood. Supports LLM proactive sticker search, WebUI management, storage cleanup, scope repair, smart emotion matching, and multi-platform compatibility."
+    },
+    "config": {
+        "_steal_section": {
+            "description": "Steal Settings",
+            "hint": ""
+        },
+        "_send_section": {
+            "description": "Send Settings",
+            "hint": ""
+        },
+        "_model_section": {
+            "description": "Models (vision / emotion / embedding)",
+            "hint": ""
+        },
+        "_group_section": {
+            "description": "Target Filtering",
+            "hint": ""
+        },
+        "_storage_section": {
+            "description": "Storage Management",
+            "hint": ""
+        },
+        "_advanced_section": {
+            "description": "Advanced Settings",
+            "hint": ""
+        },
+        "steal_meme": {
+            "description": "Enable emoji stealing",
+            "hint": "Monitors and saves images from chat. A vision model must be configured, otherwise images cannot be classified."
+        },
+        "steal_mode": {
+            "description": "Steal mode",
+            "hint": "Probability mode: random chance on each received image. Cooldown mode: enforce a minimum interval between collections."
+        },
+        "steal_chance": {
+            "description": "Steal probability",
+            "hint": "Set to 0 to never steal, set to 1 to steal every image. Recommended 0.2~0.5. Only takes effect in probability mode."
+        },
+        "image_processing_cooldown": {
+            "description": "Steal cooldown (seconds)",
+            "hint": "Minimum interval between two collections. Set to 0 for no limit. Only takes effect in cooldown mode."
+        },
+        "content_filtration": {
+            "description": "Content moderation",
+            "hint": "Uses VLM to review image content and block inappropriate images. May increase processing time per image."
+        },
+        "content_filtration_fail_open": {
+            "description": "Allow import on audit service errors",
+            "hint": "Policy hint for audit-service failures only. Images explicitly rejected by moderation will still not be imported."
+        },
+        "auto_send_meme": {
+            "description": "Auto-send stickers in chat",
+            "hint": "Bot will automatically send stickers during conversation. Disable to only collect without storing, or send manually via commands."
+        },
+        "auto_meme_intent_gate": {
+            "description": "Auto-send intent gate",
+            "hint": "Skips commands, serious/error replies, very short replies, and question-heavy messages where auto-sending is inappropriate."
+        },
+        "auto_meme_cancel_on_new_message": {
+            "description": "Cancel pending auto-send on new message",
+            "hint": "Cancels the previous delayed auto-send when a new message arrives in the same session, preventing outdated replies with incorrect images."
+        },
+        "meme_chance": {
+            "description": "Emoji send probability",
+            "hint": "Set to 0 to never send, set to 1 to always send. Recommended 0.1~0.3 to avoid spamming."
+        },
+        "send_meme_as_gif": {
+            "description": "Send as GIF",
+            "hint": "When enabled, always output as GIF for a native sticker feel. When disabled, send in original format (png/jpg/gif etc.). High-frequency sending of large GIFs may cause high memory usage."
+        },
+        "meme_send_char_delay": {
+            "description": "Per-character delay (sec/char)",
+            "hint": "Total delay = reply text length × this value. Set to 0 to disable per-character delay and use the fixed/random delay settings below instead."
+        },
+        "meme_send_delay": {
+            "description": "Fixed delay (seconds)",
+            "hint": "Delay before sending emoji to avoid conflicts with message-segmentation plugins. Recommended 5.0 s or more. Set to 0 to send immediately."
+        },
+        "meme_send_delay_random": {
+            "description": "Enable random delay",
+            "hint": "When enabled, randomly picks a delay between the fixed delay and max random delay for more natural timing. When disabled, uses fixed delay."
+        },
+        "meme_send_delay_max": {
+            "description": "Max random delay (seconds)",
+            "hint": "Only applies when random delay is enabled. Actual delay is randomly chosen between the fixed delay and this value."
+        },
+        "smart_meme_selection": {
+            "description": "Smart emoji selection",
+            "hint": "When enabled, uses composite scoring (diversity + relevance + similarity) to pick the best emoji. When disabled, picks randomly (still avoids short-term repeats)."
+        },
+        "enable_natural_emotion_analysis": {
+            "description": "Emotion recognition mode",
+            "hint": "When enabled, uses a lightweight model to analyze LLM reply semantics without modifying the reply content. When disabled, uses passive tag mode (LLM inserts && emotion tags, modifying reply content). Use /reset to clear context after switching modes."
+        },
+        "emotion_analysis_provider_id": {
+            "description": "Emotion analysis model",
+            "hint": "Leave blank to use the current session model. A small-parameter model is sufficient; a lightweight free model is recommended to reduce latency and cost."
+        },
+        "emotion_analysis_prompt": {
+            "description": "Emotion analysis prompt",
+            "hint": "Analyzes LLM reply text to determine what type of emoji to send. Supports placeholders: {emotion_list} (category list), {llm_reply} (LLM reply text), {user_message} (user message, may be empty). Leave blank to use the default prompt."
+        },
+        "vision_provider_id": {
+            "description": "Vision model",
+            "hint": "Used for image classification. Leave blank to auto-use AstrBot's global default_image_caption_provider_id."
+        },
+        "send_target_whitelist": {
+            "description": "Send target whitelist",
+            "hint": "Format: group:group_id or user:user_id. When non-empty, only whitelisted targets can receive stickers."
+        },
+        "send_target_blacklist": {
+            "description": "Send target blacklist",
+            "hint": "Format: group:group_id or user:user_id. Can be combined with whitelist; the priority rule below controls conflict resolution."
+        },
+        "send_target_filter_mode": {
+            "description": "Send filter priority",
+            "hint": "Whitelist first: allow if whitelist hit, otherwise check blacklist. Blacklist first: deny if blacklist hit, otherwise check whitelist."
+        },
+        "steal_target_whitelist": {
+            "description": "Steal target whitelist",
+            "hint": "Format: group:group_id or user:user_id. When non-empty, only whitelisted targets allow collection."
+        },
+        "steal_target_blacklist": {
+            "description": "Steal target blacklist",
+            "hint": "Format: group:group_id or user:user_id. Can be combined with whitelist; the priority rule below controls conflict resolution."
+        },
+        "steal_target_filter_mode": {
+            "description": "Steal filter priority",
+            "hint": "Whitelist first: allow if whitelist hit, otherwise check blacklist. Blacklist first: deny if blacklist hit, otherwise check whitelist."
+        },
+        "max_reg_num": {
+            "description": "Maximum emoji count",
+            "hint": "Storage limit. When the limit is reached, old emoji are automatically removed per the cleanup strategy."
+        },
+        "storage_cleanup_strategy": {
+            "description": "Storage cleanup strategy",
+            "hint": "Conservative: clean stale indexes and temp files only. Balanced: also clean orphan files and thumbnail cache. Aggressive: also clean raw image directory."
+        },
+        "steal_pool_capacity": {
+            "description": "Pending pool capacity",
+            "hint": "Auto-stolen images go to the pending pool first. When this limit is reached, stealing pauses until items are reviewed (approved or deleted) in the WebUI. Changes take effect immediately, no restart needed."
+        },
+        "audit_required": {
+            "description": "Auto-steal requires approval",
+            "hint": "When enabled, auto-stolen images go to the pending pool and require manual approval in the WebUI before being imported. When disabled, images auto-steal directly into the library. Pair with content moderation to avoid low-quality images."
+        },
+        "enable_embedding_search": {
+            "description": "Enable embedding vector search",
+            "hint": "When enabled, uses embedding vectors (FaissVecDB) for semantic similarity matching. When disabled, always uses keyword (BM25) search. An embedding model ID must be configured below; otherwise falls back to BM25."
+        },
+        "embedding_provider_id": {
+            "description": "Embedding model ID",
+            "hint": "The embedding model used to generate semantic vectors for emoji. Leave blank to auto-use AstrBot's first available Embedding Provider. Check AstrBot Admin → LLM Config for configured embedding model IDs (typically ending in _embedding, e.g. openai_embedding, qwen_embedding). This is the embedding model ID, not the chat or vision model ID."
+        },
+        "custom_meme_classification_prompt": {
+            "description": "VLM classification prompt",
+            "hint": "Supports placeholder: {emotion_list} (category list). Leave blank to use the default prompt."
+        },
+        "custom_meme_classification_with_filter_prompt": {
+            "description": "VLM classification prompt (with filtering)",
+            "hint": "Used when content moderation is enabled. Supports placeholder: {emotion_list} (category list). Leave blank to use the default prompt."
+        },
+        "sim_weight_ngram": {
+            "description": "Similarity: ngram weight",
+            "hint": "ngram Jaccard fusion weight"
+        },
+        "sim_weight_cosine": {
+            "description": "Similarity: cosine weight",
+            "hint": "ngram-frequency cosine fusion weight"
+        },
+        "sim_weight_substring": {
+            "description": "Similarity: substring weight",
+            "hint": "substring containment fusion weight"
+        },
+        "sim_weight_char": {
+            "description": "Similarity: char weight",
+            "hint": "Chinese char-level Jaccard fallback weight"
+        },
+        "sim_weight_edit": {
+            "description": "Similarity: edit weight",
+            "hint": "Levenshtein fusion weight"
+        },
+        "sim_negation_penalty": {
+            "description": "Negation penalty",
+            "hint": "final score multiplier on negation"
+        },
+        "_smart_section": {
+            "description": "Smart selection: text-distance fusion weights",
+            "hint": ""
+        }
+    },
+    "pages": {
+        "dashboard": {
+            "title": "Sticker Dashboard",
+            "header": {
+                "brand": "Henry's Spoils",
+                "subtitle": "Sticker Manager"
+            },
+            "health": {
+                "ok": "Healthy",
+                "slow": "Slow",
+                "error": "Error",
+                "checking": "Checking"
+            },
+            "stats": {
+                "total": "Total",
+                "categories": "Categories",
+                "today": "Today"
+            },
+            "sections": {
+                "pending": "Pending",
+                "library": "Library"
+            },
+            "categories": {
+                "title": "Categories",
+                "favorites": "Favorites",
+                "all": "All",
+                "add_new": "Add Category"
+            },
+            "pending": {
+                "pool": "Pending Pool",
+                "capacity": "Capacity",
+                "paused": "Paused",
+                "category_filter": "Category Filter",
+                "progress": "Pending",
+                "paused_hint": "Stealing is paused and will resume after review."
+            },
+            "search": {
+                "library": "Search stickers...",
+                "pending": "Search pending stickers..."
+            },
+            "sort": {
+                "newest": "Newest",
+                "oldest": "Oldest",
+                "most_used": "Most Used",
+                "last_used": "Last Used"
+            },
+            "actions": {
+                "done": "Done",
+                "batch": "Batch",
+                "categories": "Categories",
+                "add": "Add",
+                "batch_import": "Batch Import",
+                "storage_cleanup": "Storage Cleanup",
+                "unfavorite": "Remove Favorite",
+                "favorite": "Favorite",
+                "approve_all": "Approve All",
+                "delete_all": "Delete All",
+                "delete_blacklist": "Delete + Blacklist",
+                "approve": "Approve",
+                "delete": "Delete",
+                "blacklist": "Blacklist",
+                "download": "Download",
+                "edit": "Edit",
+                "edit_approve": "Edit & Approve",
+                "save_only": "Save Only",
+                "save_and_approve": "Save & Approve",
+                "unset_local": "Unset Local",
+                "set_local": "Set Local",
+                "cancel": "Cancel",
+                "save": "Save",
+                "analyzing": "Analyzing...",
+                "auto_analyze": "Auto Analyze",
+                "uploading": "Uploading...",
+                "confirm_add": "Confirm Add",
+                "clear_selection": "Clear Selection",
+                "retry": "Retry",
+                "close": "Close",
+                "confirm_move": "Confirm Move",
+                "confirm_set": "Confirm Set",
+                "select_all": "Select All",
+                "deselect_all": "Deselect All",
+                "move": "Move",
+                "repair_origin": "Repair Origin",
+                "confirm": "Confirm"
+            },
+            "empty": {
+                "library_title": "No stickers yet",
+                "library_hint": "Click \"Add\" to upload a new sticker.",
+                "pending_title": "No pending stickers",
+                "pending_hint": "Newly stolen stickers will wait here for review.",
+                "no_categories": "No categories yet"
+            },
+            "pagination": {
+                "prev": "Previous",
+                "next": "Next"
+            },
+            "scope": {
+                "public": "Public",
+                "local": "Local only",
+                "local_short": "Local"
+            },
+            "modal": {
+                "edit": "Edit",
+                "edit_pending": "Edit Pending Sticker",
+                "details": "Details",
+                "add_sticker": "Add Sticker",
+                "batch_import": "Batch Import Stickers",
+                "category_manager": "Category Manager",
+                "batch_move": "Batch Move",
+                "batch_scope": "Batch Scope",
+                "confirm": "Confirm Action",
+                "input": "Input"
+            },
+            "fields": {
+                "category": "Category",
+                "scope": "Scope",
+                "use_count": "Use Count",
+                "last_used": "Last Used",
+                "favorite": "Favorite",
+                "origin": "Origin",
+                "description": "Description",
+                "tags": "Tags",
+                "scenes": "Scenes",
+                "created_at": "Added At",
+                "target_category": "Target Category",
+                "target_scope": "Target Scope",
+                "image_meta": "Image",
+                "added": "Added via",
+                "reviewed_at": "Reviewed",
+                "source": "Source URL",
+                "add_method_auto": "Auto collect",
+                "add_method_manual": "Manual upload",
+                "add_method_llm": "LLM upload",
+                "add_method_api": "API upload",
+                "add_method_unknown": "Unknown"
+            },
+            "units": {
+                "times": "times"
+            },
+            "messages": {
+                "origin_unset": "Not recorded",
+                "origin_group": "Group",
+                "origin_user": "User",
+                "unknown_error": "Unknown error",
+                "unknown": "Unknown",
+                "no_description": "No description",
+                "never_used": "Never used",
+                "favorited": "Favorited",
+                "not_favorited": "Not favorited",
+                "no_tags": "No tags",
+                "no_scenes": "No scenes",
+                "no_preview": "No preview",
+                "scene_separator_hint": "comma separated",
+                "tag_separator_hint": "comma separated",
+                "scene_input_hint": "You can separate scenes with commas or semicolons."
+            },
+            "labels": {
+                "hash": "Hash"
+            },
+            "placeholders": {
+                "edit_scene": "Example: celebration, happy",
+                "edit_tags": "Example: cute, funny, rare",
+                "select_category": "Select a category...",
+                "upload_scene": "Example: office, chat window, late night",
+                "upload_tags": "Example: cute, funny",
+                "upload_desc": "Describe this sticker...",
+                "category_key": "Key (e.g. happy)",
+                "category_name": "Name (e.g. Happy)",
+                "category_desc": "Description (optional)",
+                "select": "Select..."
+            },
+            "upload": {
+                "click_to_upload": "Click to upload an image"
+            },
+            "analysis": {
+                "scenes_title": "Detected scenes",
+                "scenes_hint": "Click a tag to add or remove it from the scene field."
+            },
+            "batch": {
+                "include_subfolders": "Include subfolders",
+                "selected_count": "Selected {count} image(s)",
+                "more_count": "{count} more...",
+                "drag_upload": "Click or drag to upload multiple images",
+                "supported_formats": "Supports PNG, JPG, GIF, WEBP, BMP",
+                "default_category": "Default Category",
+                "default_category_hint": "Images will be saved into this category unless auto analyze is enabled.",
+                "auto_analyze": "Auto analyze each image and classify automatically",
+                "auto_analyze_disabled_hint": "Clear the selected category before enabling auto analyze.",
+                "auto_analyze_warning": "Auto analyze will call the VLM service concurrently. Make sure your API supports concurrency or upload in smaller batches.",
+                "start_import": "Start Import ({count})",
+                "processing": "Processing...",
+                "completed": "Import complete",
+                "failed": "Import failed",
+                "success": "success",
+                "failed_count": "failed",
+                "continue_import": "Continue Import",
+                "selected_images": "Selected {count} image(s)",
+                "scope_hint": "Images missing origin group info will be skipped when setting local scope.",
+                "selected_short": "Selected {count}"
+            },
+            "alerts": {
+                "pending_approved": "Approved {count} item(s).",
+                "pending_saved": "Pending item saved.",
+                "approve_failed": "Approve failed",
+                "and_blacklisted": "(blacklisted)",
+                "pending_deleted": "Deleted {count} item(s).",
+                "delete_failed": "Delete failed",
+                "select_pending_first": "Select pending items first.",
+                "failed_count": "{count} failed.",
+                "batch_approve_failed": "Batch approve failed",
+                "blacklisted_count": "Blacklisted {count} item(s).",
+                "batch_delete_failed": "Batch delete failed",
+                "save_failed": "Save failed",
+                "action_failed": "Action failed",
+                "move_failed": "Move failed",
+                "batch_scope_partial": "Updated {count} image(s). {skipped} skipped because origin group info is missing.",
+                "scope_set_failed": "Scope update failed.",
+                "scope_origin_missing": "This image is missing origin group info and cannot be set to local.",
+                "scope_update_failed": "Scope update failed.",
+                "favorite_failed": "Favorite update failed",
+                "batch_favorite_added": "Favorited {count} image(s).",
+                "batch_favorite_removed": "Removed favorites from {count} image(s).",
+                "batch_action_failed": "Batch action failed",
+                "storage_scan_failed": "Storage scan failed.",
+                "storage_nothing_to_clean": "No storage items need cleanup.",
+                "storage_cleanup_failed": "Storage cleanup failed.",
+                "storage_cleanup_done": "Storage cleanup completed. Processed {count} item(s).",
+                "scope_repaired": "Repaired origin scope for {count} image(s).",
+                "scope_repair_failed": "Origin scope repair failed.",
+                "select_category_or_auto": "Select a category or enable auto analyze.",
+                "upload_failed": "Upload failed.",
+                "upload_error": "Upload error.",
+                "batch_import_failed": "Batch import failed.",
+                "select_image_first": "Select an image first.",
+                "analyze_failed": "Analyze failed.",
+                "no_valid_info": "No valid information recognized.",
+                "add_failed": "Add failed."
+            },
+            "confirm": {
+                "pending_approve_batch": "Approve {count} pending item(s)?",
+                "pending_delete_blacklist_batch": "Delete and blacklist {count} pending item(s)?",
+                "pending_delete_batch": "Delete {count} pending item(s)?",
+                "delete_and_blacklist_image": "Delete and blacklist this image?\nIt will no longer be auto-collected.",
+                "delete_image": "Delete this image? This action cannot be undone.",
+                "delete_selected_images": "Delete {count} selected image(s)?",
+                "storage_cleanup": "Found {count} cleanable item(s). This will remove stale indexes, orphan files, thumbnail cache, and temp files. Continue?",
+                "update_existing_category": "Category {key} already exists. Update it?",
+                "delete_category": "Delete category {key}? Images in this category will be deleted permanently."
+            },
+            "prompt": {
+                "origin_scope": "Enter the origin scope, for example group:123456 or user:123456."
+            }
+        }
+    }
+}

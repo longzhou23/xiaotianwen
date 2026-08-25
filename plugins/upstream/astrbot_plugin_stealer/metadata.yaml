@@ -1,0 +1,43 @@
+name: astrbot_plugin_stealer
+display_name: 表情包小偷
+author: nagatoquin33
+author_url: https://github.com/nagatoquin33
+desc: 人机代码，仿maibot的表情包偷取。让bot自动偷走别人的表情包并为己所用。配置好视觉模型就能自动识别分类，对话时根据情绪自动发送。支持LLM主动选表情包、WebUI管理、存储清理、作用域修复和智能情绪匹配。
+short_desc: 自动偷取群聊表情包，AI 分类入库，对话时按情绪自动发送。
+repo: https://github.com/nagatoquin33/astrbot_plugin_stealer
+category: 娱乐
+tags:
+  - 表情包
+  - 图片识别
+  - 情绪匹配
+  - LLM 工具调用
+  - WebUI
+  - 群聊
+help: |
+  基于多模态 AI 的 AstrBot 娱乐插件：自动偷取群聊表情包，分类入库，对话时按情绪自动发送。
+
+  基础指令（/meme 前缀）：
+  - /meme on / /meme off：开启 / 关闭表情包收集
+  - /meme auto_on / /meme auto_off：开启 / 关闭自动发送
+  - /meme status：查看运行状态与表情包统计
+  - /meme list [分类] [每页数量] [页码]：列出已收集的表情包
+
+  管理指令（仅管理员）：
+  - /meme 偷：进入 30 秒强制收录模式
+  - /meme clean [force]：清理未分类的暂存图文件
+  - /meme delete <序号|文件名>：删除表情包
+  - /meme blacklist <序号|文件名>：删除并加入黑名单
+  - /meme scope <序号|文件名> <public|local>：设置表情包作用域
+  - /meme rebuild_index：重建索引
+  - /meme tag_stats [N]：标签统计（高频/低频/零标签，打标质量体检）
+
+  对话中 LLM 可自动调用 search_meme / send_meme / steal_meme 工具搜索、发送和收录表情包。
+  WebUI：在插件详情页点击「表情管理」进入管理面板。
+version: 2.8.3
+support_platforms:
+  - aiocqhttp
+  - telegram
+astrbot_version: ">=4.24.1"
+pages:
+  - name: dashboard
+    title: 表情包管理

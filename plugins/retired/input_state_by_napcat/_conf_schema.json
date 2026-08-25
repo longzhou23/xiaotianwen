@@ -1,0 +1,14 @@
+{
+  "interval": {
+    "description": "上报间隔",
+    "type": "float",
+    "hint": "单位秒，影响上报输入状态的间隔",
+    "default": 0.5
+  },
+  "timeout": {
+    "description": "超时时间",
+    "type": "int",
+    "hint": "防止llm响应过程出现错误，导致始终显示输入状态，单位秒",
+    "default": 120
+  }
+}

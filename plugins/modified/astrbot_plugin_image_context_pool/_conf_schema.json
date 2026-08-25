@@ -1,0 +1,49 @@
+{
+  "enable": {
+    "description": "启用图片上下文缓存池",
+    "type": "bool",
+    "default": true
+  },
+  "pool_size": {
+    "description": "每个会话保留的最近图片数量",
+    "type": "int",
+    "default": 3,
+    "min": 1,
+    "max": 10,
+    "hint": "数量越大，后续视觉请求可能携带更多图片。"
+  },
+  "pool_ttl": {
+    "description": "图片回放缓存有效期（秒）",
+    "type": "int",
+    "default": 1800,
+    "min": 60,
+    "max": 86400,
+    "hint": "超过有效期或文件已被清理后不会再回放。"
+  },
+  "description_first": {
+    "description": "优先使用图片 ID 和首次 VLM 描述",
+    "type": "bool",
+    "default": true,
+    "hint": "后续指代性文字请求默认只注入图片 ID 与首次描述，不重复发送原图；明确要求原图、细节或识别时才回放图片。"
+  },
+  "cache_dir": {
+    "description": "图片缓存目录",
+    "type": "string",
+    "default": "",
+    "hint": "留空使用 AstrBot plugin_data/astrbot_plugin_image_context_pool/cached_images。"
+  },
+  "max_bytes": {
+    "description": "单张图片缓存大小上限（字节）",
+    "type": "int",
+    "default": 52428800,
+    "min": 1048576,
+    "max": 209715200
+  },
+  "download_timeout": {
+    "description": "远程图片下载超时（秒）",
+    "type": "int",
+    "default": 15,
+    "min": 5,
+    "max": 120
+  }
+}

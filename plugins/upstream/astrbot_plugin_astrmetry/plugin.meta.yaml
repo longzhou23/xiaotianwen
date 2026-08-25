@@ -1,0 +1,7 @@
+name: astrbot_plugin_astrmetry
+source: https://github.com/XCM42-Orion/astrbot_plugin_astrmetry
+source_type: upstream
+modified: false
+license: see plugin metadata
+maintainer: upstream
+review_status: unverified

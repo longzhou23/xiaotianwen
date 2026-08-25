@@ -1,0 +1,31 @@
+{
+  "record_expire_seconds": {
+    "description": "撤回和待处理记录保留时间(秒)",
+    "type": "int",
+    "default": 300,
+    "hint": "用于匹配撤回消息和正在处理的 LLM 请求。建议保持 60 秒以上。"
+  },
+  "cleanup_interval": {
+    "description": "后台清理间隔(秒)",
+    "type": "int",
+    "default": 60,
+    "hint": "定期清理过期记录，避免长期运行后占用内存。"
+  },
+  "context_aware_cleanup": {
+    "description": "联动清理 context_aware 上下文",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后会删除被撤回的用户消息记录，避免污染后续上下文。"
+  },
+  "remove_bot_response_policy": {
+    "description": "context_aware Bot 回复清理策略",
+    "type": "string",
+    "default": "safe",
+    "options": [
+      "off",
+      "safe",
+      "legacy_last"
+    ],
+    "hint": "off: 不删除 Bot 回复; safe: 仅在确认本次 LLM 回复对应的 context_aware 记录仍是最后一条 Bot 回复时删除; legacy_last: 恢复旧行为，检测到撤回时尝试删除最后一条 Bot 回复。"
+  }
+}

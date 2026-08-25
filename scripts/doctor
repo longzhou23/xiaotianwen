@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_NAME=doctor
+source "$(dirname "$0")/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: bin/doctor
+
+Run read-only configuration, dependency, mount, process, and health checks.
+EOF
+}
+
+case "${1:-}" in
+  "") ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *) die "unknown argument: $1" ;;
+esac
+[[ $# -le 1 ]] || die "too many arguments"
+
+failures=0
+warnings=0
+
+pass() { printf 'PASS  %s\n' "$*"; }
+fail() { printf 'FAIL  %s\n' "$*"; failures=$((failures + 1)); }
+notice() { printf 'WARN  %s\n' "$*"; warnings=$((warnings + 1)); }
+
+echo "xtw_bot doctor"
+echo "root: $ROOT"
+
+for command in bash curl docker flock sha256sum ss tar zstd; do
+  if command -v "$command" >/dev/null 2>&1; then
+    pass "command available: $command"
+  else
+    fail "command missing: $command"
+  fi
+done
+
+for path in \
+  "$ASTROBOT_BIN" \
+  "$ASTROBOT_WORKDIR/data/cmd_config.json" \
+  "$SNOWLUMA_COMPOSE" \
+  "$SNOWLUMA_ENV" \
+  "$ROOT/snowluma/data" \
+  "$ROOT/snowluma/qq-data" \
+  "$RUNTIME/home/.config/QQ" \
+  "$ARCHIVE_ROOT"; do
+  if [[ -e "$path" ]]; then
+    pass "path exists: $path"
+  else
+    fail "path missing: $path"
+  fi
+done
+
+if [[ -x "$ASTROBOT_BIN" ]]; then
+  pass "AstrBot executable is executable"
+else
+  fail "AstrBot executable is not executable"
+fi
+
+for secret_file in "$SNOWLUMA_ENV" "$ASTROBOT_WORKDIR/data/cmd_config.json"; do
+  if [[ -f "$secret_file" ]]; then
+    mode=$(stat -c '%a' "$secret_file")
+    if [[ "$mode" == "600" || "$mode" == "400" ]]; then
+      pass "sensitive file mode is restricted: $secret_file ($mode)"
+    else
+      notice "sensitive file permissions are broader than recommended: $secret_file ($mode)"
+    fi
+  fi
+done
+
+scripts=(common.sh run-astrbot start stop restart status backup doctor logs)
+syntax_ok=true
+for script in "${scripts[@]}"; do
+  if [[ ! -f "$ROOT/bin/$script" ]]; then
+    fail "maintenance script missing: bin/$script"
+    syntax_ok=false
+  elif [[ "$script" != "common.sh" && ! -x "$ROOT/bin/$script" ]]; then
+    fail "maintenance script is not executable: bin/$script"
+    syntax_ok=false
+  elif ! bash -n "$ROOT/bin/$script"; then
+    fail "shell syntax error: bin/$script"
+    syntax_ok=false
+  fi
+done
+$syntax_ok && pass "maintenance script syntax"
+
+mapfile -t astrbot_found < <(astrbot_pids)
+case ${#astrbot_found[@]} in
+  0) notice "AstrBot is stopped" ;;
+  1)
+    pass "one AstrBot process is running (PID ${astrbot_found[0]})"
+    if tcp_open 127.0.0.1 6200 && tcp_open 127.0.0.1 8001; then
+      pass "AstrBot ports 6200/8001 are listening"
+    else
+      fail "AstrBot is running but ports 6200/8001 are not both ready"
+    fi
+    ;;
+  *) fail "multiple AstrBot processes are running: ${astrbot_found[*]}" ;;
+esac
+
+if ! command -v docker >/dev/null 2>&1; then
+  fail "Docker checks skipped because docker is missing"
+elif ! docker_ready; then
+  fail "Docker daemon is unavailable"
+else
+  pass "Docker daemon is available"
+  if snowluma_compose config --quiet; then
+    pass "SnowLuma Compose configuration"
+  else
+    fail "SnowLuma Compose configuration"
+  fi
+
+  image=$(snowluma_compose config --images | head -1)
+  if [[ -n "$image" ]] && docker image inspect "$image" >/dev/null 2>&1; then
+    pass "SnowLuma image is present: $image"
+  else
+    fail "SnowLuma image is missing: ${image:-unknown}"
+  fi
+
+  if snowluma_running; then
+    pass "SnowLuma container is running"
+    mounts=$(docker inspect "$SNOWLUMA_CONTAINER" --format '{{range .Mounts}}{{println .Source "|" .Destination}}{{end}}')
+    for expected_mount in \
+      "$ROOT/snowluma/data | /app/data" \
+      "$RUNTIME/home/.config/QQ | /app/.config/QQ" \
+      "$ROOT/snowluma/qq-data | /app/.local/share"; do
+      if [[ "$mounts" == *"$expected_mount"* ]]; then
+        pass "SnowLuma mount: $expected_mount"
+      else
+        fail "SnowLuma mount missing: $expected_mount"
+      fi
+    done
+    if http_reachable http://127.0.0.1:5099/; then
+      pass "SnowLuma WebUI is reachable"
+    else
+      fail "SnowLuma WebUI is not reachable"
+    fi
+    if tcp_open 127.0.0.1 6081; then
+      pass "SnowLuma noVNC port is listening"
+    else
+      fail "SnowLuma noVNC port is not listening"
+    fi
+  else
+    notice "SnowLuma container is stopped"
+  fi
+
+  if docker inspect napcat >/dev/null 2>&1; then
+    napcat_state=$(docker inspect napcat --format '{{.State.Status}}/{{.HostConfig.RestartPolicy.Name}}')
+    notice "deprecated NapCat container still exists ($napcat_state)"
+  fi
+fi
+
+available_kb=$(df -Pk "$ARCHIVE_ROOT" | awk 'NR == 2 {print $4}')
+if [[ "$available_kb" =~ ^[0-9]+$ ]] && ((available_kb >= 5 * 1024 * 1024)); then
+  pass "at least 5 GiB free for backups"
+else
+  notice "less than 5 GiB free for backups"
+fi
+
+mapfile -t partial_backups < <(find "$ARCHIVE_ROOT/backups/current" -maxdepth 1 -type f -name '*.partial.*' -print 2>/dev/null || true)
+if ((${#partial_backups[@]} == 0)); then
+  pass "no incomplete backups"
+else
+  notice "incomplete backup files found: ${partial_backups[*]}"
+fi
+
+printf 'summary: %d failure(s), %d warning(s)\n' "$failures" "$warnings"
+((failures == 0))

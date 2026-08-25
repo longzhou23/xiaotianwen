@@ -1,0 +1,40 @@
+{
+    "model_type": {
+        "type": "string",
+        "description": "选择使用的模型类型",
+        "options": ["small", "normal"],
+        "default": "small",
+        "hint": "small: 轻量模型，速度快 | normal: 标准模型，准确度更高"
+    },
+    "send_threshold": {
+        "type": "float",
+        "description": "判断句子完整的概率阈值",
+        "default": 0.8,
+        "hint": "取值范围 0-1，越高则越严格（需要更高的完整概率才会发送）"
+    },
+    "timeout_seconds": {
+        "type": "int",
+        "description": "消息缓存超时时间（秒）",
+        "default": 10,
+        "hint": "超过此时间后，即使句子未完整也会自动发送。设为 0 表示不超时"
+    },
+    "enabled": {
+        "type": "bool",
+        "description": "是否启用消息防抖功能",
+        "default": true,
+        "hint": "关闭后插件将不拦截任何消息"
+    },
+    "usage_scope": {
+        "type": "string",
+        "description": "使用场景",
+        "options": ["both", "group", "private"],
+        "default": "both",
+        "hint": "both: 群聊和私聊都使用 | group: 仅群聊使用 | private: 仅私聊使用"
+    },
+    "cancel_on_new_message": {
+        "type": "bool",
+        "description": "LLM 回复前收到新消息时取消回复",
+        "default": true,
+        "hint": "开启后，若用户在等待 LLM 回复时又发送消息，会取消当前回复并合并新消息"
+    }
+}

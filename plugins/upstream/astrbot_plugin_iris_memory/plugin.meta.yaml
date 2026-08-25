@@ -1,0 +1,7 @@
+name: astrbot_plugin_iris_memory
+source: https://github.com/leafliber/astrbot_plugin_iris_memory
+source_type: upstream
+modified: false
+license: see plugin metadata
+maintainer: upstream
+review_status: unverified

@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_NAME=backup
+source "$(dirname "$0")/common.sh"
+
+usage() {
+  cat <<EOF
+Usage: bin/backup [--output-dir DIR]
+
+Create a consistent offline backup of the active project. Running services are
+stopped and restored to their original state. Default output directory:
+  $ARCHIVE_ROOT/backups/current
+EOF
+}
+
+backup_dir="$ARCHIVE_ROOT/backups/current"
+while (($# > 0)); do
+  case "$1" in
+    --output-dir)
+      [[ $# -ge 2 ]] || die "--output-dir requires a path"
+      backup_dir=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+
+ensure_active_layout
+ensure_runtime_dirs
+require_commands docker tar zstd sha256sum awk du df
+docker_ready || die "Docker daemon is unavailable"
+acquire_maintenance_lock
+clear_proxy_env
+
+mkdir -p "$backup_dir"
+[[ -d "$backup_dir" && -w "$backup_dir" ]] || die "backup directory is not writable: $backup_dir"
+
+astrbot_was_running=false
+snowluma_was_running=false
+astrbot_running && astrbot_was_running=true
+snowluma_running && snowluma_was_running=true
+restore_pending=true
+partial_archive=""
+
+restore_services() {
+  local restore_failed=false
+  if $astrbot_was_running && ! astrbot_running; then
+    start_astrbot || restore_failed=true
+  fi
+  if $snowluma_was_running && ! snowluma_running; then
+    start_snowluma || restore_failed=true
+  fi
+  ! $restore_failed
+}
+
+on_exit() {
+  local rc=$?
+  trap - EXIT
+  if $restore_pending; then
+    if ! restore_services; then
+      warn "backup cleanup could not fully restore the previous service state"
+      ((rc == 0)) && rc=1
+    fi
+  fi
+  if ((rc != 0)) && [[ -n "$partial_archive" && -e "$partial_archive" ]]; then
+    warn "incomplete backup retained for inspection: $partial_archive"
+  fi
+  exit "$rc"
+}
+trap on_exit EXIT
+
+if $snowluma_was_running; then
+  stop_snowluma
+fi
+if $astrbot_was_running; then
+  stop_astrbot
+fi
+
+stamp=$(date +%Y%m%d-%H%M%S)
+project_name=$(basename "$ROOT")
+archive="$backup_dir/xtw_bot-active-$stamp.tar.zst"
+checksum="$archive.sha256"
+partial_archive="$archive.partial.$$"
+partial_checksum="$checksum.partial.$$"
+[[ ! -e "$archive" && ! -e "$checksum" ]] || die "backup already exists for timestamp $stamp"
+
+source_size=$(du -sh "$ROOT" | awk '{print $1}')
+available=$(df -h "$backup_dir" | awk 'NR == 2 {print $4}')
+log "creating backup (source $source_size, available $available)"
+
+tar --zstd --create --file "$partial_archive" \
+  --exclude="$project_name/logs" \
+  --exclude="$project_name/.runtime/run" \
+  --exclude="$project_name/astrobot/data/logs" \
+  --exclude="$project_name/astrobot/data/temp" \
+  --exclude="$project_name/snowluma/data/logs" \
+  -C "$(dirname "$ROOT")" "$project_name"
+
+archive_hash=$(sha256sum "$partial_archive" | awk '{print $1}')
+printf '%s  %s\n' "$archive_hash" "$(basename "$archive")" >"$partial_checksum"
+mv "$partial_archive" "$archive"
+partial_archive=""
+mv "$partial_checksum" "$checksum"
+(cd "$backup_dir" && sha256sum --check "$(basename "$checksum")")
+
+if ! restore_services; then
+  die "backup completed, but the previous service state could not be fully restored"
+fi
+restore_pending=false
+
+log "backup complete: $archive ($(du -h "$archive" | awk '{print $1}'))"
+echo "checksum: $checksum"

@@ -1,0 +1,7 @@
+name: astrbot_plugin_recall_cancel
+source: https://github.com/muyouzhi6/astrbot_plugin_recall_cancel
+source_type: upstream
+modified: false
+license: see plugin metadata
+maintainer: upstream
+review_status: unverified

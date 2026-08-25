@@ -1,0 +1,82 @@
+# 插件清单。版本以各插件 manifest.json/plugin.json 为准；未确认的上游差异不得直接发布。
+plugins:
+  - name: astrbot_plugin_antipromptinjector
+    category: upstream
+    source: https://github.com/oyxning/astrbot_plugin_antipromptinjector
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_affection
+    category: upstream
+    source: https://github.com/middcom/astrbot_plugin_affection
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_astrmetry
+    category: upstream
+    source: https://github.com/XCM42-Orion/astrbot_plugin_astrmetry
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_AtTool
+    category: upstream
+    source: https://github.com/nuomicici/astrbot_plugin_AtTool
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_debounce
+    category: upstream
+    source: https://github.com/advent259141/astrbot_plugin_debounce
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_iris_memory
+    category: upstream
+    source: https://github.com/leafliber/astrbot_plugin_iris_memory
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_recall_cancel
+    category: upstream
+    source: https://github.com/muyouzhi6/astrbot_plugin_recall_cancel
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_shared_context
+    category: upstream
+    source: https://github.com/Galaxy1108/astrbot_plugin_shared_context
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_smart_segmentation
+    category: upstream
+    source: https://github.com/exynos967/astrbot_plugin_smart_segmentation
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_stealer
+    category: upstream
+    source: https://github.com/nagatoquin33/astrbot_plugin_stealer
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_tool_use_cleaner
+    category: upstream
+    source: https://github.com/zz6zz666/astrbot_plugin_tool_use_cleaner
+    modified: false
+    review_status: unverified
+  - name: astrbot_plugin_context_aware
+    category: modified
+    source: https://github.com/muyouzhi6/astrbot_plugin_context_aware
+    modified: true
+    review_status: upstream-diff-required
+  - name: astrbot_plugin_group_chat_plus
+    category: modified
+    source: https://github.com/Him666233/astrbot_plugin_group_chat_plus
+    modified: true
+    review_status: upstream-diff-required
+  - name: astrbot_plugin_image_context_pool
+    category: modified
+    source: local-custom
+    modified: true
+    review_status: owner-confirmation-required
+  - name: astrbot_plugin_output_audit
+    category: modified
+    source: local-custom
+    modified: true
+    review_status: owner-confirmation-required
+  - name: input_state_by_napcat
+    category: retired
+    source: https://github.com/ctrlkk/astrbot_plugin_input_state_by_nc
+    modified: false
+    review_status: retired-napcat-deprecated

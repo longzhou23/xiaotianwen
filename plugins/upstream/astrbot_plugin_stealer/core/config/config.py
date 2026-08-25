@@ -1,0 +1,679 @@
+import json
+from pathlib import Path
+from typing import Any, ClassVar
+
+from pydantic import BaseModel, ConfigDict
+
+from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import AstrMessageEvent
+from astrbot.api.star import Context, StarTools
+
+
+class PluginConfig(BaseModel):
+    # === 基础功能 ===
+    steal_meme: bool = False
+    steal_mode: str = "probability"  # "probability" 或 "cooldown"
+    steal_chance: float = 0.3  # 概率模式下的偷图概率
+    auto_send_meme: bool = True
+    meme_chance: float = 0.2
+    send_meme_as_gif: bool = False
+    meme_send_char_delay: float = 0.3
+    meme_send_delay: float = 5.0
+    meme_send_delay_random: bool = False
+    meme_send_delay_max: float = 8.0
+    auto_meme_intent_gate: bool = True
+    auto_meme_cancel_on_new_message: bool = True
+
+    # === 群聊过滤 ===
+    steal_target_whitelist: list[str] = []
+    steal_target_blacklist: list[str] = []
+    send_target_whitelist: list[str] = []
+    send_target_blacklist: list[str] = []
+    steal_target_filter_mode: str = "whitelist_first"
+    send_target_filter_mode: str = "whitelist_first"
+
+    # === 模型配置 ===
+    vision_provider_id: str = ""
+
+    # === 内部常量/高级配置 ===
+    max_reg_num: int = 100
+    content_filtration: bool = False  # 内容审核开关
+    content_filtration_fail_open: bool = False
+    storage_cleanup_strategy: str = "balanced"
+    image_processing_cooldown: int = 30
+    enable_natural_emotion_analysis: bool = True  # 情绪识别模式
+    emotion_analysis_provider_id: str = ""  # 情绪分析专用模型
+    smart_meme_selection: bool = True  # 智能表情包选择
+
+    # === 待审核池 / 嵌入检索 ===
+    steal_pool_capacity: int = 200  # 待审核池容量上限，到达即暂停自动偷取
+    enable_embedding_search: bool = True  # 启用嵌入向量检索；不可用时降级 BM25
+    embedding_provider_id: str = ""  # 嵌入模型；留空则尝试框架首个 embedding provider
+
+    # === 智能选择：文字距离融合权重（见 _conf_schema.json _smart_section）===
+    sim_weight_ngram: float = 0.28  # n-gram Jaccard（语义词组重叠）
+    sim_weight_cosine: float = 0.25  # n-gram 词频余弦
+    sim_weight_substring: float = 0.12  # 子串包含匹配
+    sim_weight_char: float = 0.08  # 中文字符级 Jaccard（兜底）
+    sim_weight_edit: float = 0.27  # 编辑距离相似度
+    sim_negation_penalty: float = 0.25  # 否定词语义反转惩罚系数
+
+    # === 自定义提示词 ===
+    custom_meme_classification_prompt: str = ""
+    custom_meme_classification_with_filter_prompt: str = ""
+    emotion_analysis_prompt: str = ""
+
+    # === 内化常量（不再暴露给用户） ===
+    DO_REPLACE: ClassVar[bool] = True  # 达到上限始终替换旧表情
+    ENABLE_RAW_CLEANUP: ClassVar[bool] = True  # raw 始终自动清理
+    RAW_CLEANUP_INTERVAL: ClassVar[int] = 30  # 清理周期(分钟)，固定
+    ENABLE_CAPACITY_CONTROL: ClassVar[bool] = True  # 始终启用容量控制
+    CAPACITY_CONTROL_INTERVAL: ClassVar[int] = 60  # 容量检查周期(分钟)，固定
+    RAW_RETENTION_MINUTES: ClassVar[int] = 60  # 原始图片保留时间(分钟)，固定
+
+    # === 分类信息 ===
+    categories: list[str] = []
+    category_info: dict[str, dict[str, str]] = {}
+
+    # === 待审核池 ===
+    # 自动偷取时是否进入待审核池等待人工通过。
+    # True：进入 pending，需在 WebUI 审核区通过后才入库（默认，安全）。
+    # False：跳过审核，自动入库（issue #89，方便"看到就收"的用户）。
+    audit_required: bool = True
+
+    # === 内部状态 (不作为 Pydantic 字段) ===
+    # 使用 PrivateAttr 或在 __init__ 中设置且不包含在 __annotations__ 中
+    # 但 Pydantic v1/v2 处理方式不同。这里使用 __private_attributes__ 机制或直接忽略
+
+    # 忽略额外字段（Pydantic v2 model_config）
+    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
+
+    # === 常量 ===
+    # 使用 ClassVar 标注，避免被 Pydantic 识别为字段
+    DEFAULT_CATEGORIES: ClassVar[list[str]] = [
+        "happy",
+        "sad",
+        "angry",
+        "shy",
+        "surprised",
+        "troll",
+        "cry",
+        "confused",
+        "embarrassed",
+        "love",
+        "disgust",
+        "fear",
+        "excitement",
+        "tired",
+        "sigh",
+        "thank",
+        "dumb",
+    ]
+
+    DEFAULT_CATEGORY_INFO: ClassVar[dict[str, dict[str, str]]] = {
+        "happy": {"name": "开心", "desc": "快乐、愉悦、满足、好心情"},
+        "sad": {"name": "难过", "desc": "悲伤、沮丧、失落、emo"},
+        "angry": {"name": "生气", "desc": "愤怒、恼火、不满、暴躁"},
+        "shy": {"name": "害羞", "desc": "羞涩、不好意思、腼腆"},
+        "surprised": {"name": "惊讶", "desc": "意外、震惊、惊奇、啊？"},
+        "troll": {"name": "整活", "desc": "调皮、搞怪、发癫、抽象"},
+        "cry": {"name": "哭哭", "desc": "哭泣、流泪、委屈、破防"},
+        "confused": {"name": "困惑", "desc": "迷茫、不解、疑惑、问号脸"},
+        "embarrassed": {"name": "尴尬", "desc": "社死、窘迫、为难、脚趾抠地"},
+        "love": {"name": "喜欢", "desc": "喜爱、爱慕、宠溺、心动"},
+        "disgust": {"name": "嫌弃", "desc": "厌恶、反感、讨厌、yue"},
+        "fear": {"name": "害怕", "desc": "恐惧、担心、紧张、怂"},
+        "excitement": {"name": "兴奋", "desc": "激动、亢奋、嗨、上头"},
+        "tired": {"name": "困倦", "desc": "疲惫、困、无力、想躺"},
+        "sigh": {"name": "无奈", "desc": "叹气、摆烂、算了、心累"},
+        "thank": {"name": "感谢", "desc": "道谢、感恩、收到、爱了"},
+        "dumb": {"name": "无语", "desc": "呆住、傻眼、离谱、沉默"},
+    }
+
+    DEFAULT_CATEGORY_ALIASES: ClassVar[dict[str, str]] = {
+        "开心": "happy",
+        "高兴": "happy",
+        "快乐": "happy",
+        "哈哈": "happy",
+        "笑": "happy",
+        "难过": "sad",
+        "伤心": "sad",
+        "emo": "sad",
+        "沮丧": "sad",
+        "失落": "sad",
+        "生气": "angry",
+        "愤怒": "angry",
+        "恼火": "angry",
+        "暴躁": "angry",
+        "害羞": "shy",
+        "不好意思": "shy",
+        "腼腆": "shy",
+        "惊讶": "surprised",
+        "震惊": "surprised",
+        "意外": "surprised",
+        "搞怪": "troll",
+        "整活": "troll",
+        "发癫": "troll",
+        "抽象": "troll",
+        "哭": "cry",
+        "大哭": "cry",
+        "哭哭": "cry",
+        "委屈": "cry",
+        "破防": "cry",
+        "困惑": "confused",
+        "疑惑": "confused",
+        "迷茫": "confused",
+        "问号": "confused",
+        "尴尬": "embarrassed",
+        "社死": "embarrassed",
+        "为难": "embarrassed",
+        "喜欢": "love",
+        "喜爱": "love",
+        "爱": "love",
+        "心动": "love",
+        "嫌弃": "disgust",
+        "厌恶": "disgust",
+        "反感": "disgust",
+        "yue": "disgust",
+        "害怕": "fear",
+        "恐惧": "fear",
+        "紧张": "fear",
+        "怂": "fear",
+        "兴奋": "excitement",
+        "激动": "excitement",
+        "嗨": "excitement",
+        "上头": "excitement",
+        "疲惫": "tired",
+        "困": "tired",
+        "困倦": "tired",
+        "想睡": "tired",
+        "无奈": "sigh",
+        "叹气": "sigh",
+        "摆烂": "sigh",
+        "算了": "sigh",
+        "感谢": "thank",
+        "谢谢": "thank",
+        "多谢": "thank",
+        "感恩": "thank",
+        "无语": "dumb",
+        "傻眼": "dumb",
+        "离谱": "dumb",
+        "沉默": "dumb",
+        "其它": "",
+        "其他": "",
+        "其他表情": "",
+        "其他情绪": "",
+    }
+
+    def __init__(self, config: AstrBotConfig | None, context: Context | None = None):
+        # 1. 初始化 Pydantic 模型
+        # config 可能是 AstrBotConfig (dict-like) 或 None
+        initial_data = config if config else {}
+        super().__init__(**initial_data)
+
+        # 2. 保存 AstrBotConfig 引用以便回写
+        # 使用 object.__setattr__ 绕过 Pydantic 的 setattr 检查
+        object.__setattr__(self, "_data", config)
+        object.__setattr__(self, "_plugin_name", "astrbot_plugin_stealer")
+
+        # 3. 初始化路径和目录
+        data_dir = Path(StarTools.get_data_dir(self._plugin_name)).resolve()
+        object.__setattr__(self, "data_dir", data_dir)
+        object.__setattr__(self, "categories_path", data_dir / "categories.json")
+        object.__setattr__(self, "raw_dir", data_dir / "raw")
+        object.__setattr__(self, "categories_dir", data_dir / "categories")
+        object.__setattr__(self, "cache_dir", data_dir / "cache")
+        object.__setattr__(self, "pending_dir", data_dir / "pending")
+        object.__setattr__(self, "category_info_path", data_dir / "category_info.json")
+
+        # 确保目录存在
+        self.ensure_base_dirs()
+
+        self._load_category_state()
+        self._migrate_category_config()
+        self._refresh_target_policy_cache()
+
+    def _read_json_file(self, path: Path):
+        try:
+            if not path.exists():
+                return None
+            with path.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            logger.warning(f"[Config] JSON 解析失败 {path}: {e}")
+            return None
+        except Exception as e:
+            logger.debug(f"[Config] 读取文件失败 {path}: {e}")
+            return None
+
+    def _write_json_file(self, path: Path, data: Any) -> bool:
+        """写入 JSON 文件。
+
+        Args:
+            path: 文件路径
+            data: 要写入的数据
+
+        Returns:
+            bool: 是否写入成功
+        """
+        try:
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            return True
+        except PermissionError as e:
+            logger.error(f"[Config] 权限不足，无法写入文件 {path}: {e}")
+            return False
+        except OSError as e:
+            logger.error(f"[Config] 写入文件失败 {path}: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"[Config] 写入 JSON 文件时发生未知错误 {path}: {e}")
+            return False
+
+    def _load_category_state(self) -> None:
+        stored_categories = self._read_json_file(self.categories_path)
+        stored_info = self._read_json_file(self.category_info_path)
+
+        config_categories = None
+        config_info = None
+        if isinstance(self._data, dict):
+            if "categories" in self._data:
+                config_categories = self._data.get("categories")
+            if "category_info" in self._data:
+                config_info = self._data.get("category_info")
+
+        categories = (
+            stored_categories
+            if isinstance(stored_categories, list) and stored_categories
+            else config_categories
+            if isinstance(config_categories, list) and config_categories
+            else list(self.DEFAULT_CATEGORIES)
+        )
+        info = (
+            stored_info
+            if isinstance(stored_info, dict)
+            else config_info
+            if isinstance(config_info, dict)
+            else {}
+        )
+
+        # 使用 BaseModel.__setattr__ 绕过自定义 __setattr__ 中的写文件逻辑，
+        # 避免初始化期间重复写文件（最后统一写一次即可）
+        BaseModel.__setattr__(self, "categories", list(categories))
+        merged_info = dict(self.DEFAULT_CATEGORY_INFO)
+        merged_info.update(info)
+        BaseModel.__setattr__(self, "category_info", merged_info)
+        self.save_categories()
+        self.save_category_info()
+
+    def get_categories(self) -> list[str]:
+        """返回当前分类列表；为空时回退到 DEFAULT_CATEGORIES。
+
+        各 service 读取分类时统一走这个方法，避免在多处重复
+        `self.categories or DEFAULT_CATEGORIES` 模板。
+        """
+        cats = list(self.categories or [])
+        if not cats:
+            cats = list(self.DEFAULT_CATEGORIES)
+        return cats
+
+    def _migrate_category_config(self) -> None:
+        if not isinstance(self._data, dict):
+            return
+        removed = False
+        if "categories" in self._data:
+            del self._data["categories"]
+            removed = True
+        if "category_info" in self._data:
+            del self._data["category_info"]
+            removed = True
+        if removed and hasattr(self._data, "save_config"):
+            self._data.save_config()
+
+    def __setattr__(self, key: str, value: Any):
+        super().__setattr__(key, value)
+
+        if key in self._TARGET_POLICY_CONFIG_KEYS:
+            self._refresh_target_policy_cache()
+
+        if key in ("categories", "category_info"):
+            if key == "categories":
+                self.save_categories()
+            else:
+                self.save_category_info()
+
+    def update_config(self, updates: dict) -> bool:
+        """批量更新配置项。
+
+        Args:
+            updates: 配置更新字典
+
+        Returns:
+            bool: 是否更新成功
+        """
+        try:
+            for key, value in updates.items():
+                setattr(self, key, value)
+
+            # 回写到 AstrBotConfig
+            if hasattr(self, "_data") and self._data is not None:
+                if hasattr(self._data, "save_config"):
+                    self._data.save_config(updates)
+                elif isinstance(self._data, dict):
+                    self._data.update(updates)
+            return True
+        except Exception as e:
+            logger.error(f"更新配置失败: {e}")
+            return False
+
+    _TARGET_POLICY_CONFIG_KEYS: ClassVar[set[str]] = {
+        "send_target_whitelist",
+        "send_target_blacklist",
+        "send_target_filter_mode",
+        "steal_target_whitelist",
+        "steal_target_blacklist",
+        "steal_target_filter_mode",
+    }
+
+    def _normalize_target_collection(self, values: list[str] | None) -> frozenset[str]:
+        normalized: set[str] = set()
+        for value in values or []:
+            target = self.normalize_target_entry(value)
+            if target:
+                normalized.add(target)
+        return frozenset(normalized)
+
+    def _refresh_target_policy_cache(self) -> None:
+        object.__setattr__(
+            self,
+            "_target_policy_cache",
+            {
+                "send": {
+                    "whitelist": self._normalize_target_collection(self.send_target_whitelist),
+                    "blacklist": self._normalize_target_collection(self.send_target_blacklist),
+                    "mode": self._normalize_filter_mode(self.send_target_filter_mode),
+                },
+                "steal": {
+                    "whitelist": self._normalize_target_collection(self.steal_target_whitelist),
+                    "blacklist": self._normalize_target_collection(self.steal_target_blacklist),
+                    "mode": self._normalize_filter_mode(self.steal_target_filter_mode),
+                },
+            },
+        )
+
+    def save_categories(self) -> None:
+        self._write_json_file(self.categories_path, self.categories)
+
+    def save_category_info(self) -> None:
+        self._write_json_file(self.category_info_path, self.category_info)
+
+    def ensure_category_dir(self, category: str) -> Path:
+        category_dir = self.categories_dir / str(category)
+        category_dir.mkdir(parents=True, exist_ok=True)
+        return category_dir
+
+    def ensure_category_dirs(self, categories: list[str] | None) -> None:
+        if not categories:
+            return
+        for category in categories:
+            self.ensure_category_dir(category)
+
+    def ensure_raw_dir(self) -> Path:
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        return self.raw_dir
+
+    def ensure_cache_dir(self) -> Path:
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        return self.cache_dir
+
+    def ensure_pending_dir(self) -> Path:
+        """确保待审核池目录存在，并返回其路径。"""
+        self.pending_dir.mkdir(parents=True, exist_ok=True)
+        return self.pending_dir
+
+    def ensure_base_dirs(self) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        self.categories_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.pending_dir.mkdir(parents=True, exist_ok=True)
+
+    def normalize_category_strict(self, category: str) -> str | None:
+        """严格归一化情绪分类。"""
+        if not category:
+            return None
+
+        category = category.lower().strip()
+
+        # 1. 直接匹配当前配置的分类列表（包括用户自定义分类）
+        if category in self.categories:
+            return category
+
+        # 2. 匹配默认分类（兜底）
+        if category in self.DEFAULT_CATEGORIES:
+            return category
+
+        # 3. 别名查找
+        return self.DEFAULT_CATEGORY_ALIASES.get(category)
+
+    def get_keyword_map(self) -> dict[str, str]:
+        """获取关键词映射表。"""
+        return self.DEFAULT_CATEGORY_ALIASES
+
+    def get_prompts(self, default_prompts: dict[str, str] | None = None) -> dict[str, str]:
+        """获取提示词配置。
+
+        Args:
+            default_prompts: 默认提示词字典，用于在配置为空时回退
+
+        Returns:
+            dict: 包含两个提示词的字典
+        """
+        custom_prompt = getattr(self, "custom_meme_classification_prompt", "")
+        custom_filter_prompt = getattr(self, "custom_meme_classification_with_filter_prompt", "")
+
+        result = {
+            "emoji_classification_prompt": "",
+            "emoji_classification_with_filter_prompt": "",
+        }
+
+        # 配置值优先
+        if custom_prompt and custom_prompt.strip():
+            result["emoji_classification_prompt"] = custom_prompt.strip()
+        elif default_prompts:
+            result["emoji_classification_prompt"] = default_prompts.get(
+                "EMOJI_CLASSIFICATION_PROMPT", ""
+            )
+
+        if custom_filter_prompt and custom_filter_prompt.strip():
+            result["emoji_classification_with_filter_prompt"] = custom_filter_prompt.strip()
+        elif default_prompts:
+            result["emoji_classification_with_filter_prompt"] = default_prompts.get(
+                "EMOJI_CLASSIFICATION_WITH_FILTER_PROMPT", ""
+            )
+
+        return result
+
+    def get_category_info(self) -> list[dict[str, str]]:
+        categories = self.categories or list(self.DEFAULT_CATEGORIES)
+        info_map = self.category_info or {}
+
+        result: list[dict[str, str]] = []
+        for key in categories:
+            info = info_map.get(key, {}) if isinstance(info_map, dict) else {}
+            name = str(info.get("name", "") or key)
+            desc = str(info.get("desc", "") or "")
+            result.append({"key": str(key), "name": name, "desc": desc})
+        return result
+
+    def get_group_id(self, event: AstrMessageEvent) -> str:
+        """获取群号。"""
+        try:
+            return event.get_group_id()
+        except Exception:
+            return ""
+
+    def get_user_id(self, event: AstrMessageEvent) -> str:
+        try:
+            user_id = event.get_sender_id()
+            if user_id:
+                return str(user_id).strip()
+        except Exception:
+            pass
+
+        for attr in ("sender_id", "user_id"):
+            try:
+                value = getattr(event, attr, None)
+            except Exception:
+                value = None
+            if value:
+                return str(value).strip()
+
+        try:
+            message_obj = getattr(event, "message_obj", None)
+            sender = getattr(message_obj, "sender", None) if message_obj else None
+            user_id = getattr(sender, "user_id", None) if sender is not None else None
+            if user_id:
+                return str(user_id).strip()
+        except Exception:
+            pass
+
+        return ""
+
+    def get_event_target(self, event: AstrMessageEvent) -> tuple[str, str]:
+        group_id = self.get_group_id(event)
+        if group_id:
+            return "group", str(group_id).strip()
+
+        user_id = self.get_user_id(event)
+        if user_id:
+            return "user", str(user_id).strip()
+
+        return "", ""
+
+    def get_event_targets(self, event: AstrMessageEvent) -> list[str]:
+        targets: list[str] = []
+        seen: set[str] = set()
+
+        group_id = self.get_group_id(event)
+        if group_id:
+            normalized = self.normalize_target_entry(group_id, "group")
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                targets.append(normalized)
+
+        user_id = self.get_user_id(event)
+        if user_id:
+            normalized = self.normalize_target_entry(user_id, "user")
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                targets.append(normalized)
+
+        return targets
+
+    @staticmethod
+    def normalize_target_entry(value: object, default_scope: str = "group") -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+
+        lowered = raw.lower()
+        for prefix, scope in (
+            ("group:", "group"),
+            ("g:", "group"),
+            ("群:", "group"),
+            ("user:", "user"),
+            ("u:", "user"),
+            ("qq:", "user"),
+            ("好友:", "user"),
+            ("私聊:", "user"),
+        ):
+            if lowered.startswith(prefix):
+                target_id = raw[len(prefix) :].strip()
+                return f"{scope}:{target_id}" if target_id else ""
+
+        if ":" in raw:
+            scope, target_id = raw.split(":", 1)
+            scope = scope.strip().lower()
+            target_id = target_id.strip()
+            if scope in {"group", "user"} and target_id:
+                return f"{scope}:{target_id}"
+
+        return f"{default_scope}:{raw}" if raw else ""
+
+    def _get_action_lists(self, action: str) -> tuple[list[str], list[str]]:
+        policy = self._get_action_policy(action)
+        return (sorted(policy["whitelist"]), sorted(policy["blacklist"]))
+
+    @staticmethod
+    def _normalize_filter_mode(value: object) -> str:
+        raw = str(value or "").strip().lower()
+        if raw in {"blacklist_first", "blacklist", "bl", "black"}:
+            return "blacklist_first"
+        return "whitelist_first"
+
+    def _get_action_filter_mode(self, action: str) -> str:
+        return str(self._get_action_policy(action)["mode"])
+
+    def _get_action_policy(self, action: str) -> dict[str, object]:
+        cache = getattr(self, "_target_policy_cache", None)
+        if not isinstance(cache, dict):
+            self._refresh_target_policy_cache()
+            cache = getattr(self, "_target_policy_cache", {})
+        return cache.get(str(action or "").strip().lower(), {}) or {}
+
+    def is_action_allowed(self, action: str, event: AstrMessageEvent) -> bool:
+        targets = self.get_event_targets(event)
+        if not targets:
+            return True
+        return self._is_normalized_targets_allowed(action, targets)
+
+    def is_targets_allowed(self, action: str, target_entries: list[str]) -> bool:
+        normalized_targets: list[str] = []
+        seen: set[str] = set()
+        for entry in target_entries or []:
+            normalized = self.normalize_target_entry(entry)
+            if normalized and normalized not in seen:
+                seen.add(normalized)
+                normalized_targets.append(normalized)
+
+        if not normalized_targets:
+            return True
+
+        return self._is_normalized_targets_allowed(action, normalized_targets)
+
+    def _is_normalized_targets_allowed(self, action: str, normalized_targets: list[str]) -> bool:
+        if not normalized_targets:
+            return True
+
+        policy = self._get_action_policy(action)
+        whitelist = policy.get("whitelist", frozenset())
+        blacklist = policy.get("blacklist", frozenset())
+        filter_mode = str(policy.get("mode", "whitelist_first"))
+        whitelist_hit = any(target in whitelist for target in normalized_targets)
+        blacklist_hit = any(target in blacklist for target in normalized_targets)
+
+        if filter_mode == "blacklist_first":
+            if blacklist_hit:
+                return False
+            if whitelist:
+                return whitelist_hit
+            return True
+
+        if whitelist_hit:
+            return True
+        if blacklist_hit:
+            return False
+        if whitelist:
+            return False
+        return True
+
+    def is_target_allowed(self, action: str, target_entry: str) -> bool:
+        return self.is_targets_allowed(action, [target_entry])
+
+    def is_group_allowed(self, group_id: str) -> bool:
+        """检查群组是否允许。"""
+        if not group_id:
+            return True
+
+        return self.is_target_allowed("send", f"group:{group_id}")

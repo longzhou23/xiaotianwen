@@ -1,0 +1,12 @@
+# 版本基线（迁移时人工核对）
+# 这里记录兼容性基线，不放 API Key、Token 或机器特定路径。
+
+OS=Ubuntu 24.04
+Python=3.12
+AstrBot=4.27.2
+SnowLuma=1.14.8
+NapCat=retired
+
+# Provider/model 名称由私有实例配置注入，升级前请先做一次请求和数据库备份。
+PRIMARY_LLM=private-instance-config
+EMBEDDING_PROVIDER=SiliconFlow

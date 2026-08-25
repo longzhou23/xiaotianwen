@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_NAME=status
+source "$(dirname "$0")/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: bin/status [--quiet]
+
+Show service, endpoint, port, disk, and latest-backup status.
+With --quiet, print nothing and only return the health exit code.
+EOF
+}
+
+quiet=false
+case "${1:-}" in
+  "") ;;
+  -q|--quiet) quiet=true ;;
+  -h|--help)
+    usage
+    exit 0
+    ;;
+  *) die "unknown argument: $1" ;;
+esac
+[[ $# -le 1 ]] || die "too many arguments"
+
+overall_ok=true
+mapfile -t astrbot_found < <(astrbot_pids)
+astrbot_ports_ok=false
+if ((${#astrbot_found[@]} == 1)) && \
+   tcp_open 127.0.0.1 6200 && tcp_open 127.0.0.1 8001; then
+  astrbot_ports_ok=true
+else
+  overall_ok=false
+fi
+
+docker_ok=false
+snowluma_ok=false
+if command -v docker >/dev/null 2>&1 && docker_ready; then
+  docker_ok=true
+  if snowluma_running && \
+     (http_reachable http://127.0.0.1:5099/ || wait_for_http http://127.0.0.1:5099/ 3); then
+    snowluma_ok=true
+  else
+    overall_ok=false
+  fi
+else
+  overall_ok=false
+fi
+
+if $quiet; then
+  $overall_ok
+  exit $?
+fi
+
+echo "services:"
+case ${#astrbot_found[@]} in
+  0)
+    echo "  astrbot: stopped"
+    ;;
+  1)
+    astrbot_pid_value=${astrbot_found[0]}
+    astrbot_elapsed=$(ps -o etime= -p "$astrbot_pid_value" 2>/dev/null | xargs || true)
+    if $astrbot_ports_ok; then
+      echo "  astrbot: healthy (PID $astrbot_pid_value, uptime ${astrbot_elapsed:-unknown})"
+    else
+      echo "  astrbot: unhealthy (PID $astrbot_pid_value, expected ports 6200/8001 not ready)"
+    fi
+    ;;
+  *)
+    echo "  astrbot: unhealthy (multiple instances: ${astrbot_found[*]})"
+    ;;
+esac
+
+if ! $docker_ok; then
+  echo "  snowluma: unknown (Docker daemon unavailable)"
+elif snowluma_exists; then
+  snowluma_summary=$(docker inspect "$SNOWLUMA_CONTAINER" --format \
+    'status={{.State.Status}}, image={{.Config.Image}}, restarts={{.RestartCount}}, policy={{.HostConfig.RestartPolicy.Name}}')
+  if $snowluma_ok; then
+    echo "  snowluma: healthy ($snowluma_summary)"
+  else
+    echo "  snowluma: unhealthy ($snowluma_summary)"
+  fi
+else
+  echo "  snowluma: not created"
+fi
+
+echo "endpoints:"
+for endpoint in \
+  "AstrBot Dashboard|http://127.0.0.1:6200/" \
+  "AstrBot OneBot|tcp://127.0.0.1:8001" \
+  "SnowLuma WebUI|http://127.0.0.1:5099/" \
+  "SnowLuma noVNC|tcp://127.0.0.1:6081"; do
+  name=${endpoint%%|*}
+  address=${endpoint#*|}
+  case "$address" in
+    http://*)
+      if http_reachable "$address"; then state=ok; else state=down; fi
+      ;;
+    tcp://*)
+      host_port=${address#tcp://}
+      host=${host_port%:*}
+      port=${host_port##*:}
+      if tcp_open "$host" "$port"; then state=ok; else state=down; fi
+      ;;
+  esac
+  printf '  %-20s %-4s %s\n' "$name" "$state" "$address"
+done
+
+echo "storage:"
+df -h "$ROOT" "$ARCHIVE_ROOT" 2>/dev/null | awk 'NR == 1 || !seen[$1]++ {printf "  %s\n", $0}'
+latest_backup=$(find "$ARCHIVE_ROOT/backups/current" -maxdepth 1 -type f -name 'xtw_bot-active-*.tar.zst' -printf '%T@|%p\n' 2>/dev/null | sort -nr | head -1 | cut -d'|' -f2- || true)
+if [[ -n "$latest_backup" ]]; then
+  echo "latest backup: $latest_backup ($(du -h "$latest_backup" | awk '{print $1}'))"
+else
+  echo "latest backup: none"
+fi
+
+$overall_ok

@@ -1,0 +1,38 @@
+# secrets and local instance state
+.env
+.env.*
+!.env.example
+secrets/
+private/
+runtime/
+.runtime/
+
+# generated data and logs
+logs/
+*.log
+*.log.*
+tmp/
+temp/
+cache/
+caches/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# local AstrBot instance data
+astrobot/data/config/
+astrobot/data/plugin_data/
+astrobot/data/knowledge_base/
+astrobot/data/data_v4.db*
+astrobot/data/attachments/
+astrobot/data/webchat/
+astrobot/data/workspaces/
+
+# local deployment files
+gateway/**/.cloudflared/
+gateway/**/.w3m/
+deploy/**/.env
+deploy/**/.env.*
+!deploy/**/.env.example

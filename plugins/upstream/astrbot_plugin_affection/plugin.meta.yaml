@@ -1,0 +1,7 @@
+name: astrbot_plugin_affection
+source: https://github.com/middcom/astrbot_plugin_affection
+source_type: upstream
+modified: false
+license: see LICENSE in plugin directory
+maintainer: upstream
+review_status: unverified

@@ -1,0 +1,76 @@
+{
+  "default_full_affection_uids": {
+    "description": "默认满好感（100）的用户 UID，多个用英文逗号分隔",
+    "type": "string",
+    "default": "",
+    "hint": "例如: 123456,789012。对所有机器人实例生效。"
+  },
+  "modify_sensitivity": {
+    "description": "情绪变化敏感度 (0-100)，越高单次变化越大",
+    "type": "int",
+    "default": 30,
+    "hint": "影响每次对话后的数值增量系数。"
+  },
+  "initial_affection": {
+    "description": "新用户的初始好感度 (0-100)",
+    "type": "int",
+    "default": 50,
+    "hint": "创建新用户时的默认好感度，对所有机器人实例生效。"
+  },
+  "initial_libido_other": {
+    "description": "新用户的初始他力比多基线值 (0-50)",
+    "type": "int",
+    "default": 25,
+    "hint": "创建新用户时的默认对他力比多基线，对所有机器人实例生效。"
+  },
+  "initial_aggression_other": {
+    "description": "新用户的初始他攻击性基线值 (0-50)",
+    "type": "int",
+    "default": 25,
+    "hint": "创建新用户时的默认对他攻击性基线，对所有机器人实例生效。"
+  },
+  "initial_libido_self": {
+    "description": "机器人的初始自力比多基线值 (0-50)",
+    "type": "int",
+    "default": 25,
+    "hint": "首次启动时机器人的默认自力比多基线，对所有机器人实例生效。"
+  },
+  "initial_aggression_self": {
+    "description": "机器人的初始自攻击性基线值 (0-50)",
+    "type": "int",
+    "default": 25,
+    "hint": "首次启动时机器人的默认自攻击性基线，对所有机器人实例生效。"
+  },
+  "unconscious_llm": {
+    "description": "潜意识 LLM 配置",
+    "type": "object",
+    "items": {
+      "provider_id": {
+        "description": "LLM 提供商 ID（留空则使用当前会话默认）",
+        "type": "string",
+        "default": ""
+      }
+    }
+  },
+  "decay_duration_hours": {
+    "description": "情绪衰减周期（小时）",
+    "type": "float",
+    "default": 2.0,
+    "hint": "当前情绪值回归基线所需的时间。数值越大，情绪变化持续越久。"
+  },
+  "idle_check_enabled": {
+    "description": "是否启用长时间未互动检测",
+    "type": "bool",
+    "default": true
+  },
+  "idle_threshold_hours": {
+    "description": "触发空闲分析的最短未互动小时数",
+    "type": "float",
+    "default": 6.0
+  },
+  "debug_mode": {
+    "description": "调试模式",
+    "type": "bool",
+    "default": false
+  }
+}

@@ -1,0 +1,9 @@
+name: astrbot_plugin_debounce
+description: 消息防抖插件 - 使用微调过的模型判断用户是否说完一句话，合并连续发送的多条消息再提交，避免频繁调用 LLM
+author: Jason.Joestar
+version: 1.1.1
+display_name: 消息防抖
+repo: https://github.com/advent259141/astrbot_plugin_debounce
+
+
+

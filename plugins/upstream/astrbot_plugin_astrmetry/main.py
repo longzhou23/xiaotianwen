@@ -1,0 +1,634 @@
+"""Astrometry.net integration with an opt-in LLM tool for star-field images.
+
+The normal image captioning path remains owned by ContextAware. This plugin
+only runs when the model explicitly calls analyze_star_field (or when the
+user uses /解析), which avoids sending every ordinary image to Astrometry.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import shutil
+import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any
+
+import aiofiles
+import aiohttp
+
+from astrbot.api import AstrBotConfig, logger
+from astrbot.api import message_components as Comp
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.star import Context, Star, register
+from astrbot.core.agent.message import TextPart
+
+try:
+    from astrbot.core.agent.run_context import ContextWrapper
+except Exception:
+    ContextWrapper = None
+
+
+ASTROMETRY_BASE = "http://nova.astrometry.net"
+AUTO_RESULT_KEY = "_astrmetry_auto_result"
+AUTO_HINT_KEY = "_astrmetry_auto_hint_added"
+AUTO_FINAL_HINT_KEY = "_astrmetry_auto_final_hint_added"
+AUTO_ANNOTATION_PATH_KEY = "_astrmetry_annotation_path"
+AUTO_ANNOTATION_SENT_KEY = "_astrmetry_annotation_sent"
+AUTO_CONTEXT_INJECTED_KEY = "_astrmetry_recent_context_injected"
+
+
+def _iter_segments(segments: list[Any] | None):
+    """Yield message segments, including images inside a quoted reply."""
+    for segment in segments or []:
+        yield segment
+        if isinstance(segment, Comp.Reply):
+            yield from _iter_segments(segment.chain)
+
+
+def _find_image(event: AstrMessageEvent) -> Comp.Image | None:
+    for segment in _iter_segments(event.get_messages()):
+        if isinstance(segment, Comp.Image):
+            return segment
+    return None
+
+
+def _find_images(event: AstrMessageEvent) -> list[Comp.Image]:
+    """Return all images in the current message and quoted replies."""
+    return [segment for segment in _iter_segments(event.get_messages()) if isinstance(segment, Comp.Image)]
+
+
+def _unwrap_event(event: AstrMessageEvent) -> AstrMessageEvent:
+    """兼容 v4.26+ LLM 工具收到 ContextWrapper 的情况。"""
+    if ContextWrapper is not None and isinstance(event, ContextWrapper):
+        return event.context.event
+    return event
+
+
+async def _json_response(
+    session: aiohttp.ClientSession,
+    method: str,
+    url: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    async with session.request(method, url, **kwargs) as response:
+        text = await response.text()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"Astrometry.net 返回了无法解析的响应（HTTP {response.status}）"
+            ) from exc
+        if response.status >= 400:
+            message = data.get("errormessage") or data.get("message") or text[:200]
+            raise RuntimeError(f"Astrometry.net HTTP {response.status}: {message}")
+        if not isinstance(data, dict):
+            raise RuntimeError("Astrometry.net 返回格式异常")
+        return data
+
+
+async def _materialize_image(
+    image: Comp.Image,
+    destination: Path,
+    session: aiohttp.ClientSession,
+) -> None:
+    """Copy a current-message image to a local file for upload."""
+    source = getattr(image, "url", None) or getattr(image, "file", None)
+    if not source:
+        raise RuntimeError("当前图片没有可下载的地址")
+    source = str(source)
+    if source.startswith(("http://", "https://")):
+        async with session.get(source) as response:
+            if response.status >= 400:
+                raise RuntimeError(f"下载图片失败（HTTP {response.status}）")
+            content = await response.read()
+        async with aiofiles.open(destination, "wb") as file:
+            await file.write(content)
+        return
+
+    try:
+        local_path = await image.convert_to_file_path()
+    except Exception as exc:
+        raise RuntimeError("当前图片不是可访问的网络图片或本地文件") from exc
+    if not local_path or not os.path.exists(local_path):
+        raise RuntimeError("无法定位当前图片文件")
+    shutil.copyfile(local_path, destination)
+
+
+async def _upload_file(
+    file_path: Path,
+    session_id: str,
+    session: aiohttp.ClientSession,
+) -> str:
+    form = aiohttp.FormData()
+    form.add_field(
+        "request-json",
+        json.dumps(
+            {
+                "session": session_id,
+                "publicly_visible": "y",
+                "allow_modifications": "d",
+                "allow_commercial_use": "d",
+            }
+        ),
+        content_type="text/plain",
+    )
+    async with aiofiles.open(file_path, "rb") as file:
+        form.add_field(
+            "file",
+            await file.read(),
+            filename=file_path.name,
+            content_type="application/octet-stream",
+        )
+    async with session.post(
+        f"{ASTROMETRY_BASE}/api/upload",
+        data=form,
+        headers={"MIME-Version": "1.0"},
+    ) as response:
+        text = await response.text()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Astrometry.net 上传返回格式异常") from exc
+        if response.status >= 400 or "subid" not in data:
+            message = data.get("errormessage") or data.get("message") or text[:200]
+            raise RuntimeError(f"Astrometry.net 上传失败: {message}")
+        return str(data["subid"])
+
+
+async def _poll_submission(
+    subid: str,
+    session: aiohttp.ClientSession,
+    deadline: float,
+) -> str:
+    while time.monotonic() < deadline:
+        data = await _json_response(
+            session, "GET", f"{ASTROMETRY_BASE}/api/submissions/{subid}"
+        )
+        jobs = data.get("jobs") or []
+        if jobs and jobs[0] is not None:
+            return str(jobs[0])
+        await asyncio.sleep(0.5)
+    raise RuntimeError(f"等待提交结果超时（subid={subid}）")
+
+
+async def _poll_job(
+    jobid: str,
+    session: aiohttp.ClientSession,
+    deadline: float,
+) -> None:
+    while time.monotonic() < deadline:
+        data = await _json_response(
+            session, "GET", f"{ASTROMETRY_BASE}/api/jobs/{jobid}"
+        )
+        status = str(data.get("status") or "").lower()
+        if status == "success":
+            return
+        if status in {"failure", "failed"}:
+            raise RuntimeError(f"Astrometry.net 解析失败（jobid={jobid}）")
+        await asyncio.sleep(0.5)
+    raise RuntimeError(f"等待解析结果超时（jobid={jobid}）")
+
+
+class _AnalysisError(RuntimeError):
+    """Marker used to keep user-facing tool failures concise."""
+
+
+@register(
+    "astrbot_plugin_astrmetry",
+    "M42",
+    "接入Astrometry.net进行星空图解析，并在模型判断为星空图时提供分析工具",
+    "1.4",
+    "https://github.com/XCM42-Orion/astrbot_plugin_astrmetry",
+)
+class MyPlugin(Star):
+    def __init__(self, context: Context, config: AstrBotConfig):
+        super().__init__(context)
+        self.config = config
+        self.api_key = str(config.get("APIkey", "") or "").strip()
+        self.auto_analyze = bool(config.get("auto_analyze_star_photos", True))
+        self.auto_hint = bool(config.get("auto_tool_hint", True))
+        self.max_wait_seconds = max(
+            30, min(int(config.get("max_wait_seconds", 100) or 100), 180)
+        )
+        self.annotation_cache_ttl = max(300, int(config.get("annotation_cache_ttl", 86400) or 86400))
+        self.analysis_context_ttl = max(300, int(config.get("analysis_context_ttl", 604800) or 604800))
+        self.max_images_per_analysis = max(1, min(int(config.get("max_images_per_analysis", 6) or 6), 12))
+        self.annotation_cache_dir = Path(
+            os.path.join(
+                os.path.dirname(os.path.dirname(__file__)),
+                "plugin_data",
+                "astrbot_plugin_astrmetry",
+                "annotated",
+            )
+        ).resolve()
+        try:
+            self.annotation_cache_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning("[astrmetry] 无法创建标注图缓存目录：%s", exc)
+        self._annotated_by_session: dict[str, dict[str, Any]] = {}
+        self._analysis_by_session: dict[str, list[dict[str, Any]]] = {}
+        self.analysis_context_path = self.annotation_cache_dir.parent / "analysis_context.json"
+        self._load_analysis_context()
+        logger.info(
+            "[astrmetry] 已加载：auto_analyze_star_photos=%s, max_wait_seconds=%s, annotation_cache_ttl=%s",
+            self.auto_analyze,
+            self.max_wait_seconds,
+            self.annotation_cache_ttl,
+        )
+        logger.info("[astrmetry] 深空解析上下文 TTL=%ss，单次最多解析图片数=%s", self.analysis_context_ttl, self.max_images_per_analysis)
+
+    @filter.on_llm_request(priority=-1000)
+    async def _add_star_tool_hint(self, event: AstrMessageEvent, req) -> None:
+        """Add recent Astrometry facts and an ephemeral tool-use hint."""
+        self._inject_recent_analysis_context(event, req)
+        if not (self.auto_analyze and self.auto_hint):
+            return
+
+        has_internal_result = isinstance(event.get_extra(AUTO_RESULT_KEY), str)
+        if has_internal_result:
+            if event.get_extra(AUTO_FINAL_HINT_KEY):
+                return
+            hint = (
+                "[天文工具收尾提示]\n"
+                "天文工具已经返回内部分析资料。现在只生成给用户看的最终回复，"
+                "必须遵守当前系统 persona 和对话语气；不要直接粘贴或逐项复述工具资料，"
+                "不要输出 jobid、原始字段名、内部标签或 Astrometry.net 链接，"
+                "除非用户明确要求技术解析。"
+            )
+            marker = AUTO_FINAL_HINT_KEY
+        else:
+            if _find_image(event) is None or event.get_extra(AUTO_HINT_KEY):
+                return
+            hint = (
+                "[天文图片工具提示]\n"
+                "当前消息包含图片。若图片确实是星空、星野、银河、星座、深空或天文摄影，"
+                "请调用 analyze_star_field 进行 Astrometry.net 解析；普通照片、表情包、"
+                "建筑夜景和只需要一般画面描述的图片不要调用。该工具可能需要几十秒，"
+                "同一张图只调用一次。一般图片描述仍由现有图片理解能力完成。"
+                "工具返回的是内部分析资料，不是最终消息；调用后必须继续按当前系统人格组织回复。"
+            )
+            marker = AUTO_HINT_KEY
+
+        extra_parts = getattr(req, "extra_user_content_parts", None)
+        if isinstance(extra_parts, list):
+            extra_parts.append(TextPart(text=hint).mark_as_temp())
+        else:
+            req.system_prompt = (req.system_prompt or "") + "\n" + hint
+        event.set_extra(marker, True)
+
+    def _load_analysis_context(self) -> None:
+        """Load persisted per-session plate-solving summaries without raw URLs."""
+        try:
+            data = json.loads(self.analysis_context_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return
+        if not isinstance(data, dict):
+            return
+        now = time.time()
+        for session_id, entries in data.items():
+            if not isinstance(entries, list):
+                continue
+            valid = [
+                item for item in entries
+                if isinstance(item, dict) and now - float(item.get("created_at", 0)) <= self.analysis_context_ttl
+            ]
+            if valid:
+                self._analysis_by_session[str(session_id)] = valid[-3:]
+
+    def _save_analysis_context(self) -> None:
+        """Persist compact astronomy facts for migration/restart continuity."""
+        try:
+            self.analysis_context_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.analysis_context_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(self._analysis_by_session, ensure_ascii=False, indent=2))
+            temporary.replace(self.analysis_context_path)
+        except OSError as exc:
+            logger.warning("[astrmetry] 保存深空解析上下文失败：%s", exc)
+
+    def _remember_analysis(self, event: AstrMessageEvent, result: dict[str, Any]) -> None:
+        """Remember the latest compact facts so later turns can refer to the image."""
+        session_id = str(event.unified_msg_origin)
+        record = {
+            "created_at": time.time(),
+            "objects": result.get("objects", "未知"),
+            "ra": result.get("ra", "未知"),
+            "dec": result.get("dec", "未知"),
+            "radius": result.get("radius", "未知"),
+            "pixscale": result.get("pixscale", "未知"),
+            "annotated_url": result.get("annotated_url", ""),
+            "jobid": result.get("jobid", ""),
+            "image_index": result.get("image_index", 1),
+            "annotation_path": result.get("annotation_path", ""),
+            "annotation_cached": bool(result.get("annotation_cached")),
+        }
+        entries = self._analysis_by_session.setdefault(session_id, [])
+        entries.append(record)
+        self._analysis_by_session[session_id] = entries[-3:]
+        self._save_analysis_context()
+        logger.info("[astrmetry] 已保存深空解析上下文：会话=%s，目标=%s", session_id, record["objects"])
+
+    def _inject_recent_analysis_context(self, event: AstrMessageEvent, req) -> None:
+        """Inject recent plate-solving facts as temporary user context."""
+        if event.get_extra(AUTO_CONTEXT_INJECTED_KEY, False):
+            return
+        session_id = str(event.unified_msg_origin)
+        now = time.time()
+        entries = [
+            item for item in self._analysis_by_session.get(session_id, [])
+            if now - float(item.get("created_at", 0)) <= self.analysis_context_ttl
+        ]
+        self._analysis_by_session[session_id] = entries[-3:]
+        if not entries:
+            return
+        lines = [
+            "[近期深空图片解析上下文｜仅供当前回复参考]",
+            "以下是这个会话之前已经解析过的深空图片资料；除非用户明确指向当前图片，不要把它当成当前图片的新识别结果。",
+        ]
+        for index, item in enumerate(entries, 1):
+            lines.extend(
+                [
+                    f"记录 {index}：",
+                    f"目标数：{item.get('objects', '未知')}",
+                    f"中心赤经：{item.get('ra', '未知')}",
+                    f"中心赤纬：{item.get('dec', '未知')}",
+                    f"视场半径：{item.get('radius', '未知')}°",
+                    f"像素尺寸：{item.get('pixscale', '未知')} arcsec/pixel",
+                    f"标注图链接：{item.get('annotated_url', '未知')}",
+                    f"解析任务编号：{item.get('jobid', '未知')}",
+                    f"标注图缓存：{'可发送' if item.get('annotation_cached') else '不可用'}",
+                ]
+            )
+        lines.append("使用要求：用户提到‘之前那张’‘刚才的深空图’或其中的天体时，可按图片编号引用这些事实；标注图链接仅供内部定位/发送，除非用户明确要求链接，否则不要原样输出。]")
+        content = "\n".join(lines)
+        extra_parts = getattr(req, "extra_user_content_parts", None)
+        if isinstance(extra_parts, list):
+            extra_parts.append(TextPart(text=content).mark_as_temp())
+        else:
+            req.system_prompt = (req.system_prompt or "") + "\n" + content
+        event.set_extra(AUTO_CONTEXT_INJECTED_KEY, True)
+
+    async def _cache_annotation(
+        self, event: AstrMessageEvent, result: dict[str, Any]
+    ) -> str | None:
+        """把 Astrometry 标注图保存为稳定文件，供后续工具按需发送。"""
+        raw = result.get("annotated_bytes")
+        if not isinstance(raw, (bytes, bytearray)) or not raw:
+            return None
+        session_id = str(event.unified_msg_origin)
+        jobid = str(result.get("jobid") or "unknown")
+        safe_session = "".join(ch if ch.isalnum() else "_" for ch in session_id)[-80:]
+        path = self.annotation_cache_dir / f"annotated-{safe_session}-{jobid}.png"
+        try:
+            await asyncio.to_thread(path.write_bytes, bytes(raw))
+        except Exception as exc:
+            logger.warning("[astrmetry] 保存标注图失败：%s", exc)
+            return None
+        self._annotated_by_session[session_id] = {
+            "path": str(path),
+            "jobid": jobid,
+            "annotated_url": result.get("annotated_url", ""),
+            "created_at": time.time(),
+        }
+        event.set_extra(AUTO_ANNOTATION_PATH_KEY, str(path))
+        logger.info("[astrmetry] 标注图已缓存：%s", path.name)
+        return str(path)
+
+    def _get_cached_annotations(self, event: AstrMessageEvent, all_images: bool = False) -> list[str]:
+        session_id = str(event.unified_msg_origin)
+        now = time.time()
+        paths = [
+            str(item.get("annotation_path") or "")
+            for item in self._analysis_by_session.get(session_id, [])
+            if now - float(item.get("created_at", 0)) <= self.annotation_cache_ttl
+            and item.get("annotation_cached")
+            and item.get("annotation_path")
+            and os.path.isfile(str(item.get("annotation_path")))
+        ]
+        if not paths:
+            record = self._annotated_by_session.get(session_id)
+            if record and now - float(record.get("created_at", 0)) <= self.annotation_cache_ttl:
+                path = str(record.get("path") or "")
+                if path and os.path.isfile(path):
+                    paths = [path]
+        return paths if all_images else paths[-1:]
+
+    def _get_cached_annotation(self, event: AstrMessageEvent) -> str | None:
+        paths = self._get_cached_annotations(event)
+        return paths[-1] if paths else None
+
+    async def _analyze_image(
+        self,
+        image: Comp.Image,
+        *,
+        include_annotation: bool = False,
+    ) -> dict[str, Any]:
+        if not self.api_key:
+            raise _AnalysisError("未配置 Astrometry.net API Key")
+
+        timeout = aiohttp.ClientTimeout(total=25)
+        deadline = time.monotonic() + self.max_wait_seconds
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            with TemporaryDirectory(prefix="astrmetry-") as temporary_dir:
+                source_path = Path(temporary_dir) / "source.jpg"
+                try:
+                    await _materialize_image(image, source_path, session)
+                    login = await _json_response(
+                        session,
+                        "POST",
+                        f"{ASTROMETRY_BASE}/api/login",
+                        data={"request-json": json.dumps({"apikey": self.api_key})},
+                    )
+                    session_id = str(login.get("session") or "")
+                    if not session_id:
+                        message = login.get("errormessage") or login.get("message")
+                        raise _AnalysisError(
+                            f"Astrometry.net 登录失败{': ' + str(message) if message else ''}"
+                        )
+                    subid = await _upload_file(source_path, session_id, session)
+                    jobid = await _poll_submission(subid, session, deadline)
+                    await _poll_job(jobid, session, deadline)
+                    info = await _json_response(
+                        session,
+                        "GET",
+                        f"{ASTROMETRY_BASE}/api/jobs/{jobid}/info/",
+                    )
+                    calibration = info.get("calibration") or {}
+                    result: dict[str, Any] = {
+                        "subid": subid,
+                        "jobid": jobid,
+                        "objects": info.get("objects_in_field", "未知"),
+                        "ra": calibration.get("ra", "未知"),
+                        "dec": calibration.get("dec", "未知"),
+                        "radius": calibration.get("radius", "未知"),
+                        "pixscale": calibration.get("pixscale", "未知"),
+                        "annotated_url": f"{ASTROMETRY_BASE}/annotated_display/{jobid}.png",
+                    }
+                    if include_annotation:
+                        try:
+                            async with session.get(result["annotated_url"]) as response:
+                                if response.status == 200:
+                                    result["annotated_bytes"] = await response.read()
+                        except Exception as exc:
+                            logger.warning("[astrmetry] 下载标注图失败：%s", exc)
+                    return result
+                except _AnalysisError:
+                    raise
+                except asyncio.TimeoutError as exc:
+                    raise _AnalysisError("Astrometry.net 请求超时") from exc
+                except aiohttp.ClientError as exc:
+                    raise _AnalysisError(f"Astrometry.net 网络错误：{exc}") from exc
+                except Exception as exc:
+                    raise _AnalysisError(str(exc)) from exc
+
+    @staticmethod
+    def _format_result(result: dict[str, Any]) -> str:
+        return (
+            "Astrometry.net 星空解析完成。\n"
+            f"目标数：{result['objects']}\n"
+            f"中心赤经：{result['ra']}\n"
+            f"中心赤纬：{result['dec']}\n"
+            f"视场半径：{result['radius']}°\n"
+            f"像素尺寸：{result['pixscale']} arcsec/pixel\n"
+            f"标注图像：{result['annotated_url']}\n"
+            f"jobid：{result['jobid']}"
+        )
+
+    def _format_tool_result(self, result: dict[str, Any]) -> str:
+        """Format plate-solving facts as private context for the next LLM turn."""
+        if result.get("annotation_cached"):
+            annotation_hint = (
+                "标注图已经缓存；如果用户想看标注结果，请调用 "
+                "send_annotated_star_field 发送图片，并用自然语气说明可以发给对方。"
+            )
+        else:
+            annotation_hint = "本次标注图下载未成功，暂时不要承诺可以发送标注图。"
+        return (
+            "[内部天文分析资料｜仅供当前回复模型参考，禁止直接转发\n"
+            + self._format_result(result)
+            + "\n回复要求：请结合当前图片、对话上下文和系统 persona 自然回应用户；"
+            "不要原样复述本资料，不要输出 jobid、原始字段名或 Astrometry.net 链接，"
+            "除非用户明确要求查看技术解析结果。"
+            + annotation_hint
+            + "]"
+        )
+
+    @filter.llm_tool(name="analyze_star_field")
+    async def analyze_star_field(self, event: AstrMessageEvent) -> str:
+        """分析当前消息中的星空、星野或深空天文照片。
+
+        只在当前消息或引用消息包含清晰的天文摄影图片时调用。普通照片、
+        表情包、风景照和一般图片描述不要调用；一般图片理解由其他能力完成。
+        本工具不需要也不接受图片 URL，始终使用当前消息中的图片。
+
+        返回值是给下一轮模型推理使用的内部资料，不是给用户直接展示的最终回复。
+        调用后必须继续生成符合当前系统 persona 的自然语言回复。
+        """
+        event = _unwrap_event(event)
+        if not self.auto_analyze:
+            return "天文图片自动分析已关闭。"
+        cached = event.get_extra(AUTO_RESULT_KEY)
+        if isinstance(cached, str):
+            return cached
+        images = _find_images(event)
+        if not images:
+            return "当前消息没有可供天文分析的图片。"
+        if len(images) > self.max_images_per_analysis:
+            logger.info("[astrmetry] 当前消息包含 %s 张图片，仅解析前 %s 张", len(images), self.max_images_per_analysis)
+            images = images[: self.max_images_per_analysis]
+        logger.info("[astrmetry] LLM 调用 analyze_star_field：图片数=%s", len(images))
+        results: list[dict[str, Any]] = []
+        failures: list[str] = []
+        for image_index, image in enumerate(images, 1):
+            try:
+                result = await self._analyze_image(image, include_annotation=True)
+                result["annotation_path"] = await self._cache_annotation(event, result) or ""
+                result["annotation_cached"] = bool(result["annotation_path"])
+                result["image_index"] = image_index
+                self._remember_analysis(event, result)
+                results.append(result)
+            except _AnalysisError as exc:
+                failures.append(f"图片 {image_index}：{exc}")
+        if not results:
+            message = "天文图片解析未完成：" + "；".join(failures)
+            event.set_extra(AUTO_RESULT_KEY, message)
+            return message
+        text = self._format_tool_results(results, failures)
+        event.set_extra(AUTO_RESULT_KEY, text)
+        return text
+
+    def _format_tool_results(self, results: list[dict[str, Any]], failures: list[str] | None = None) -> str:
+        """Format multiple image analyses while preserving each image link."""
+        blocks = ["[内部天文分析资料｜仅供当前回复模型参考，禁止直接转发"]
+        for result in results:
+            blocks.append(f"图片 {result.get('image_index', 1)}：\n" + self._format_result(result))
+        if failures:
+            blocks.append("未完成的图片：" + "；".join(failures))
+        blocks.append("回复要求：结合图片编号、上下文和系统 persona 自然回应；不要原样复述 jobid、URL 或字段名。若用户想看标注图，可按需调用 send_annotated_star_field。]")
+        return "\n".join(blocks)
+
+    @filter.llm_tool(name="send_annotated_star_field")
+    async def send_annotated_star_field(self, event: AstrMessageEvent, all_images: bool = False):
+        """按用户要求发送最近一次 Astrometry 星空解析生成的标注图。
+
+        仅在用户明确想查看、接收或发送标注图时调用。工具会直接发送图片，
+        不要把服务器路径、临时文件名或 Astrometry.net URL 输出给用户。
+        """
+        event = _unwrap_event(event)
+        paths = self._get_cached_annotations(event, all_images=bool(all_images))
+        if not paths:
+            yield "目前没有可发送的标注图。请先对一张星空图片执行解析。"
+            return
+        try:
+            for path in paths:
+                await event.send(MessageChain([Comp.Image.fromFileSystem(path)]))
+            event.set_extra(AUTO_ANNOTATION_SENT_KEY, True)
+            logger.info("[astrmetry] 已按需发送 %s 张标注图", len(paths))
+            yield f"已发出 {len(paths)} 张标注图。请继续用自然语气回应用户，不要重复输出内部文件路径。"
+        except Exception as exc:
+            logger.error("[astrmetry] 发送标注图失败：%s", exc, exc_info=True)
+            yield "标注图暂时发送失败，请稍后再试。"
+
+    @filter.command("解析")
+    async def analyse(self, event: AstrMessageEvent):
+        """使用 /解析 手动提交当前或引用消息中的一张或多张图片。"""
+        images = _find_images(event)
+        if not images:
+            yield event.plain_result("未找到图片。请直接发送图片，或回复一张图片后发送 /解析。")
+            return
+        if len(images) > self.max_images_per_analysis:
+            images = images[: self.max_images_per_analysis]
+        logger.info("%s 执行了手动天文解析，图片数=%s", event.get_sender_name(), len(images))
+        results = []
+        failures = []
+        for image_index, image in enumerate(images, 1):
+            try:
+                result = await self._analyze_image(image, include_annotation=True)
+                annotation_path = await self._cache_annotation(event, result)
+                result["annotation_path"] = annotation_path or ""
+                result["annotation_cached"] = bool(annotation_path)
+                result["image_index"] = image_index
+                self._remember_analysis(event, result)
+                results.append(result)
+            except _AnalysisError as exc:
+                failures.append(f"图片 {image_index}：{exc}")
+        if not results:
+            yield event.plain_result("解析失败：" + "；".join(failures))
+            return
+        # QQ 私聊不接受 At 消息段；群聊保留 @ 发起者，私聊只发送文本和标注图。
+        chain = []
+        if not event.is_private_chat():
+            chain.append(Comp.At(qq=event.get_sender_id()))
+        for result in results:
+            chain.append(Comp.Plain(f"图片 {result.get('image_index', 1)}：\n" + self._format_result(result)))
+            annotation_path = result.get("annotation_path")
+            annotated = result.get("annotated_bytes")
+            if annotation_path and os.path.isfile(annotation_path):
+                chain.append(Comp.Image.fromFileSystem(annotation_path))
+            elif annotated:
+                chain.append(Comp.Image.fromBytes(annotated))
+        if failures:
+            chain.append(Comp.Plain("未完成：" + "；".join(failures)))
+        yield event.chain_result(chain)

@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_NAME=logs
+source "$(dirname "$0")/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: bin/logs [all|astrbot|snowluma] [--tail N] [--follow]
+
+Show recent logs. Following is supported for one service at a time.
+EOF
+}
+
+service=all
+lines=100
+follow=false
+while (($# > 0)); do
+  case "$1" in
+    all|astrbot|snowluma)
+      service=$1
+      shift
+      ;;
+    --tail)
+      [[ $# -ge 2 ]] || die "--tail requires a positive integer"
+      is_positive_integer "$2" || die "invalid --tail value: $2"
+      lines=$2
+      shift 2
+      ;;
+    -f|--follow)
+      follow=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+validate_service_name "$service"
+
+if $follow && [[ "$service" == "all" ]]; then
+  die "choose astrbot or snowluma when using --follow"
+fi
+
+show_astrbot_logs() {
+  [[ -f "$ASTROBOT_LOG" ]] || die "AstrBot log not found: $ASTROBOT_LOG"
+  if $follow; then
+    exec tail -n "$lines" -F "$ASTROBOT_LOG"
+  else
+    tail -n "$lines" "$ASTROBOT_LOG"
+  fi
+}
+
+show_snowluma_logs() {
+  require_commands docker
+  docker_ready || die "Docker daemon is unavailable"
+  snowluma_exists || die "SnowLuma container does not exist"
+  if $follow; then
+    exec docker logs --tail "$lines" --follow "$SNOWLUMA_CONTAINER"
+  else
+    docker logs --tail "$lines" "$SNOWLUMA_CONTAINER"
+  fi
+}
+
+case "$service" in
+  astrbot)
+    show_astrbot_logs
+    ;;
+  snowluma)
+    show_snowluma_logs
+    ;;
+  all)
+    echo "===== AstrBot ====="
+    show_astrbot_logs
+    echo
+    echo "===== SnowLuma ====="
+    show_snowluma_logs
+    ;;
+esac

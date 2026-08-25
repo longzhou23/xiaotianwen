@@ -1,0 +1,9 @@
+name: astrbot_plugin_output_audit
+display_name: 输出监管 AI
+desc: 在 AstrBot 发送最终自然语言回复前执行本地硬规则和独立 AI 审核。
+short_desc: 最终回复的独立安全门禁。
+author: xtw_bot
+version: v1.0.0
+astrbot_version: ">=4.27.2,<5"
+support_platforms:
+  - aiocqhttp

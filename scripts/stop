@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_NAME=stop
+source "$(dirname "$0")/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: bin/stop [all|astrbot|snowluma]
+
+Stop the current xtw_bot services. Default: all.
+EOF
+}
+
+case "${1:-all}" in
+  -h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
+service=${1:-all}
+[[ $# -le 1 ]] || die "too many arguments"
+validate_service_name "$service"
+ensure_runtime_dirs
+acquire_maintenance_lock
+clear_proxy_env
+
+case "$service" in
+  all)
+    stop_snowluma
+    stop_astrbot
+    ;;
+  astrbot)
+    stop_astrbot
+    ;;
+  snowluma)
+    stop_snowluma
+    ;;
+esac

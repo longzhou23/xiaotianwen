@@ -1,0 +1,7 @@
+name: astrbot_plugin_smart_segmentation
+source: https://github.com/exynos967/astrbot_plugin_smart_segmentation
+source_type: upstream
+modified: false
+license: see LICENSE in plugin directory
+maintainer: upstream
+review_status: unverified

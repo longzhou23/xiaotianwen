@@ -1,0 +1,158 @@
+{
+    "enabled": {
+        "description": "是否启用反注入攻击插件功能。",
+        "type": "bool",
+        "default": true
+    },
+    "defense_mode": {
+        "description": "核心防御模式选择 (可通过指令切换)",
+        "type": "string",
+        "enum": [
+            {"value": "sentry", "label": "哨兵模式 (极速)"},
+            {"value": "aegis", "label": "神盾模式 (均衡)"},
+            {"value": "scorch", "label": "焦土模式 (强硬)"},
+            {"value": "intercept", "label": "拦截模式 (经典)"}
+        ],
+        "default": "sentry",
+        "ui:widget": "select",
+        "hint": "选择插件的核心防御策略。\n- 哨兵模式(sentry): 启发式巡航，命中高风险时自动加固提示词，性能优先。\n- 神盾模式(aegis): 启发式 + LLM 复核，兼顾安全性与体验。\n- 焦土模式(scorch): 命中风险即强制改写为拦截提示，最严格。\n- 拦截模式(intercept): 命中风险直接中止事件，兼容性最佳。\n\n快捷指令：管理员可发送 `/切换防护模式` 循环切换。",
+        "obvious_hint": true
+    },
+    "auto_blacklist": {
+        "description": "自动拉黑注入者",
+        "type": "bool",
+        "default": true,
+        "hint": "启用后，当用户被判定为进行注入攻击时，其 ID 将被自动添加至黑名单。"
+    },
+    "blacklist_duration": {
+        "description": "自动拉黑时长（分钟）",
+        "type": "int",
+        "default": 60,
+        "hint": "自动拉黑的封禁时长（单位：分钟）。设置为 0 代表永久封禁。"
+    },
+    "blacklist": {
+        "description": "黑名单列表（自动或手动添加）",
+        "type": "object",
+        "default": {},
+        "items": {},
+        "hint": "记录被封禁用户及其解封时间戳，可通过指令或 WebUI 管理。"
+    },
+    "initial_whitelist": {
+        "description": "插件的初始白名单用户 ID 列表",
+        "type": "list",
+        "items": {
+            "type": "string",
+            "description": "用户 ID"
+        },
+        "default": []
+    },
+    "llm_analysis_mode": {
+        "description": "LLM 辅助分析模式 (用于神盾/焦土/拦截模式)",
+        "type": "string",
+        "enum": [
+            {"value": "active", "label": "活跃"},
+            {"value": "standby", "label": "待机"},
+            {"value": "disabled", "label": "禁用"}
+        ],
+        "default": "standby",
+        "ui:widget": "select",
+        "hint": "控制 LLM 辅助分析的触发策略。\n- 活跃(active): 每条消息都进行复核。\n- 待机(standby): 命中风险或出现 @ 时才复核。\n- 禁用(disabled): 完全关闭 LLM 复核。",
+        "obvious_hint": true
+    },
+    "review_provider": {
+        "description": "LLM 复核使用的供应商名（留空使用默认）",
+        "type": "string",
+        "default": "",
+        "hint": "例如：openai、azure、gemini 等（视 AstrBot 已配置的 Provider 名称而定）。"
+    },
+    "review_model": {
+        "description": "LLM 复核使用的模型名（留空使用默认）",
+        "type": "string",
+        "default": "",
+        "hint": "例如：gpt-4o、gpt-4o-mini、claude-3.5 等（取决于所选供应商）。"
+    },
+    "llm_analysis_private_chat_enabled": {
+        "description": "私聊中也启用 LLM 辅助分析",
+        "type": "bool",
+        "default": false,
+        "hint": "设为 true 可让私聊消息同样触发 LLM 注入分析。"
+    },
+    "anti_harassment_enabled": {
+        "description": "启用防性骚扰/辱骂/霸凌检测与拦截",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，将识别骚扰、挑逗、辱骂、威胁等不当请求并提升风险等级。可在 WebUI 或指令中开关。"
+    },
+    "sanitize_enabled": {
+        "description": "启用提示词净化，移除伪造系统/工具调用/编码载荷片段",
+        "type": "bool",
+        "default": true,
+        "hint": "在非高风险场景也会清理明显的覆盖/越权结构，降低被篡改风险。"
+    },
+    "incident_history_size": {
+        "description": "WebUI 拦截记录数量上限",
+        "type": "int",
+        "default": 100,
+        "hint": "控制 WebUI 中展示的历史拦截事件数量，建议 50-200。"
+    },
+    "webui_enabled": {
+        "description": "是否启用 WebUI 控制台",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，在配置的地址上提供可视化配置与监控面板。"
+    },
+    "webui_host": {
+        "description": "WebUI 监听地址",
+        "type": "string",
+        "default": "127.0.0.1",
+        "hint": "默认仅允许本地访问，如需对局域网开放请修改为 0.0.0.0。"
+    },
+    "webui_port": {
+        "description": "WebUI 监听端口",
+        "type": "int",
+        "default": 18888,
+        "hint": "与其他服务端口冲突时可在此处调整。"
+    },
+    "webui_password_hash": {
+        "description": "WebUI 密码哈希（自动维护）",
+        "type": "string",
+        "default": "",
+        "hint": "请通过指令 /设置WebUI密码 <新密码> 设置。此字段由插件自动生成，无需手动修改。"
+    },
+    "webui_password_salt": {
+        "description": "WebUI 密码盐值（自动维护）",
+        "type": "string",
+        "default": "",
+        "hint": "由插件自动生成，与 webui_password_hash 配套使用。"
+    },
+    "webui_password_alg": {
+        "description": "WebUI 密码哈希算法（自动维护）",
+        "type": "string",
+        "default": "",
+        "hint": "当前使用 pbkdf2_sha256。由插件自动维护。"
+    },
+    "webui_password_iters": {
+        "description": "WebUI 密码哈希迭代次数（自动维护）",
+        "type": "int",
+        "default": 0,
+        "hint": "由插件自动维护，提升密码哈希强度。"
+    },
+    "webui_token": {
+        "description": "WebUI 访问令牌",
+        "type": "string",
+        "default": "",
+        "hint": "设置非空字符串后，访问 WebUI 需携带 ?token=令牌，确保面板安全。"
+    },
+    "webui_session_timeout": {
+        "description": "WebUI 会话保持时长（秒）",
+        "type": "int",
+        "default": 3600,
+        "hint": "登录成功后的会话有效期，默认 3600 秒。"
+    },
+    "enable_signature_lock": {
+        "description": "启用请求签名锁，阻止读取过程中被篡改",
+        "type": "bool",
+        "default": true,
+        "hint": "在发送前校验请求签名，如被其他插件修改且包含可疑结构则强制拦截。"
+    }
+}

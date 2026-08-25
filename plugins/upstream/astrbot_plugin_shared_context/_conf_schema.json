@@ -1,0 +1,181 @@
+{
+  "custom_groups": {
+    "description": "自定义共享组：按组控制哪些会话之间共享上下文",
+    "type": "object",
+    "items": {
+      "enable_custom_groups": {
+        "description": "启用自定义共享组",
+        "hint": "关闭时（默认）同一机器人下的所有会话共享全部上下文。",
+        "type": "bool",
+        "default": false
+      },
+      "out_of_group_mode": {
+        "description": "组外会话的处理方式",
+        "hint": "未命中任何共享组条目的会话的处理方式（组内只见组内，组外只见组外，互不可见）：isolate = 完全独立（不记录、不注入）；bot = 与本机器人其他组外会话共享；global = 与所有机器人的组外会话共享（不推荐）。",
+        "type": "string",
+        "options": [
+          "isolate",
+          "bot",
+          "global"
+        ],
+        "default": "isolate",
+        "condition": {
+          "enable_custom_groups": true
+        }
+      },
+      "cross_bot_share": {
+        "description": "允许跨机器人共享",
+        "hint": "仅对 share_groups 中显式分组的会话生效；关闭时不同机器人之间永不共享。",
+        "type": "bool",
+        "default": false,
+        "condition": {
+          "enable_custom_groups": true
+        }
+      },
+      "share_groups": {
+        "description": "多共享组（JSON：键为组名，值为该组的 umo 数组）",
+        "hint": "JSON 格式：{\"组名\": [\"umo1\", \"umo2\"]}。条目支持三种写法：精确会话 umo、*（对任何会话都展开为本机器人内的全部对话）、qq-bot:*（指定机器人的全部会话）。跨机器人双向互通需显式声明对端机器人。示例：{\"我的跨平台\": [\"qq-bot:*\", \"wechat-bot:*\"]}。详细用法见 README「自定义共享组」与「跨机器人共享」章节。",
+        "type": "text",
+        "editor_mode": true,
+        "editor_language": "json",
+        "editor_theme": "vs-dark",
+        "default": "{}",
+        "condition": {
+          "enable_custom_groups": true
+        }
+      }
+    }
+  },
+  "file_caption": {
+    "description": "文件与图片转述：控制消息中的文件/图片如何进入共享上下文",
+    "type": "object",
+    "items": {
+      "file_component_mode": {
+        "description": "非文本组件（图片/文件/语音/视频等）的处理方式",
+        "type": "string",
+        "options": [
+          "ignore",
+          "placeholder",
+          "caption",
+          "full"
+        ],
+        "default": "ignore",
+        "hint": "ignore = 忽略（默认，只记录文字）；placeholder = 记录占位标记（如 [图片]、[文件: 名]）；caption = 图片用 AI 转述生成简短占位；full = 文件读取文本内容转发，图片同样用 AI 转述。其余组件回退占位。"
+      },
+      "max_file_chars": {
+        "description": "文件内容转述的最大字符数（full 模式）",
+        "type": "int",
+        "default": 2000,
+        "condition": {
+          "file_component_mode": "full"
+        }
+      },
+      "caption_use_multimodal": {
+        "description": "多模转述开关",
+        "type": "bool",
+        "default": true,
+        "hint": "仅当 file_component_mode 为 caption 或 full 时生效。开启：图片由多模态转述模型看图直述；关闭：图片由纯文本转述模型转述。注意：转述每一张图片都会产生一次额外 LLM 调用，转述所有图片可能很昂贵。"
+      },
+      "caption_text_provider_id": {
+        "description": "纯文本转述模型提供商",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "hint": "始终启用的转述执行模型：多模开关关闭时负责图片转述，开启时作为多模态转述模型的兜底。留空使用当前会话的提供商。"
+      },
+      "caption_prompt": {
+        "description": "图片转述提示词",
+        "type": "string",
+        "default": "Please describe the image using Chinese.",
+        "condition": {
+          "caption_use_multimodal": true
+        }
+      },
+      "caption_multimodal_provider_id": {
+        "description": "多模态转述模型提供商",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider",
+        "condition": {
+          "caption_use_multimodal": true
+        },
+        "hint": "仅转述图片等多模态内容。多模转述开关开启时使用；留空依次回退到纯文本转述模型、当前会话提供商。模型需支持识图。"
+      }
+    }
+  },
+  "cache_optimization": {
+    "description": "缓存优化（激进模式）",
+    "type": "object",
+    "items": {
+      "enable_cache_optimization": {
+        "description": "启用缓存优化",
+        "hint": "牺牲少量跨轮上下文连续性，换取服务端提示词缓存命中率。默认关闭，关闭时行为与旧版本完全一致。开启后：每轮注入量改为\"上次请求后新增的消息 + 最近几条保底\"（增量注入），且注入块大小受缓存友好上限约束（见 cache_ratio），大幅降低每轮的缓存 miss 量。代价：较早的其他会话消息不会每轮重复注入，跨轮连续性略有下降。",
+        "type": "bool",
+        "default": false
+      },
+      "incremental_injection": {
+        "description": "增量注入",
+        "hint": "开启：会话第一次请求注入全量，之后只注入新增记录与最近 keep_recent 条保底；关闭：每轮注入整个共享池（受 max_chars 限制，旧行为）。",
+        "type": "bool",
+        "default": true,
+        "condition": {
+          "enable_cache_optimization": true
+        }
+      },
+      "keep_recent": {
+        "description": "跨轮保底保留的最近记录条数",
+        "hint": "增量注入时，除新增消息外始终保留的最近 N 条记录，保证模型对\"刚才提到的内容\"仍有连续性。越大越接近旧行为，越小缓存越友好。",
+        "type": "int",
+        "default": 3,
+        "condition": {
+          "enable_cache_optimization": true
+        }
+      },
+      "cache_ratio": {
+        "description": "注入块与可缓存上下文的体积比",
+        "hint": "注入块大小 = min(max_chars, 会话历史+当前消息字符数 × cache_ratio)，保证块不会喧宾夺主，命中率有下限。1.5 表示块最多为历史的 1.5 倍（命中率约 60% 起步），调小更省但上下文变少。",
+        "type": "float",
+        "default": 1.5,
+        "condition": {
+          "enable_cache_optimization": true
+        }
+      }
+    }
+  },
+  "include_timestamps": {
+    "description": "注入的记录行是否带时间戳",
+    "hint": "时间戳占 token 且让模型过分关注时间，关掉可进一步压缩每轮注入量（对缓存命中率影响很小，可独立开关）。",
+    "type": "bool",
+    "default": true
+  },
+  "max_messages": {
+    "description": "共享池保留的最大消息条数",
+    "type": "int",
+    "default": 50
+  },
+  "max_chars": {
+    "description": "每轮 LLM 请求注入的字符数上限",
+    "type": "int",
+    "default": 3000
+  },
+  "max_message_chars": {
+    "description": "单条消息记录时的截断长度",
+    "type": "int",
+    "default": 200
+  },
+  "time_window_minutes": {
+    "description": "只注入最近 N 分钟内的消息，0 表示不限",
+    "type": "int",
+    "default": 0
+  },
+  "include_bot_replies": {
+    "description": "是否记录并共享机器人回复",
+    "type": "bool",
+    "default": true
+  },
+  "skip_command": {
+    "description": "跳过以 / 开头的指令消息",
+    "type": "bool",
+    "default": true
+  }
+}

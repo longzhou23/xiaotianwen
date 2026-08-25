@@ -1,0 +1,7 @@
+name: astrbot_plugin_group_chat_plus
+source: https://github.com/Him666233/astrbot_plugin_group_chat_plus
+source_type: fork-or-local-modification
+modified: true
+license: see LICENSE in plugin directory
+maintainer: xiaotianwen-maintainers
+review_status: upstream-diff-required

@@ -1,0 +1,498 @@
+from __future__ import annotations
+
+import importlib.util
+import os
+import sys
+import tempfile
+import types
+import unittest
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
+
+PLUGIN_PATH = Path(__file__).resolve().parents[1] / "main.py"
+
+
+def _decorator(*args: Any, **kwargs: Any):
+    def wrap(func):
+        return func
+
+    return wrap
+
+
+def install_astrbot_stubs() -> dict[str, types.ModuleType]:
+    astrbot_mod = types.ModuleType("astrbot")
+    api_mod = types.ModuleType("astrbot.api")
+    event_mod = types.ModuleType("astrbot.api.event")
+    provider_mod = types.ModuleType("astrbot.api.provider")
+    message_components_mod = types.ModuleType("astrbot.api.message_components")
+    core_mod = types.ModuleType("astrbot.core")
+    agent_mod = types.ModuleType("astrbot.core.agent")
+    agent_message_mod = types.ModuleType("astrbot.core.agent.message")
+
+    class Logger:
+        def info(self, *args, **kwargs):
+            pass
+
+        def debug(self, *args, **kwargs):
+            pass
+
+        def warning(self, *args, **kwargs):
+            pass
+
+        def error(self, *args, **kwargs):
+            pass
+
+    class Star:
+        def __init__(self, context):
+            self.context = context
+
+    StarNamespace = types.SimpleNamespace(Star=Star, Context=object)
+
+    class PlatformAdapterType:
+        ALL = object()
+
+    FilterNamespace = types.SimpleNamespace(
+        PlatformAdapterType=PlatformAdapterType,
+        platform_adapter_type=_decorator,
+        on_llm_request=_decorator,
+        on_llm_response=_decorator,
+        after_message_sent=_decorator,
+    )
+
+    class TextPart:
+        def __init__(self, text: str):
+            self.text = text
+
+        def mark_as_temp(self):
+            return self
+
+    class Plain:
+        def __init__(self, text: str):
+            self.text = text
+
+    class Image:
+        def __init__(self, url: str = "", file: str = "", path: str = ""):
+            self.url = url
+            self.file = file
+            self.path = path
+
+        @staticmethod
+        def fromFileSystem(path: str):
+            resolved = Path(path).resolve()
+            return Image(file=resolved.as_uri(), path=str(resolved))
+
+    class File:
+        def __init__(self, name: str, file: str = "", url: str = ""):
+            self.name = name
+            self.file_ = file
+            self.url = url
+            self.get_file_calls = 0
+
+        async def get_file(self):
+            self.get_file_calls += 1
+            return self.file_
+
+    class At:
+        def __init__(self, qq: str, name: str = ""):
+            self.qq = qq
+            self.name = name
+
+    class AtAll:
+        pass
+
+    class Reply:
+        def __init__(self, sender_id: str = ""):
+            self.sender_id = sender_id
+            self.chain = []
+
+    astrbot_mod.logger = Logger()
+    api_mod.star = StarNamespace
+    event_mod.AstrMessageEvent = object
+    event_mod.filter = FilterNamespace
+    class ProviderRequest:
+        def __init__(self):
+            self.system_prompt = ""
+            self.extra_user_content_parts = []
+
+    provider_mod.LLMResponse = object
+    provider_mod.Provider = object
+    provider_mod.ProviderRequest = ProviderRequest
+    agent_message_mod.TextPart = TextPart
+    message_components_mod.Plain = Plain
+    message_components_mod.File = File
+    message_components_mod.Image = Image
+    message_components_mod.At = At
+    message_components_mod.AtAll = AtAll
+    message_components_mod.Reply = Reply
+
+    return {
+        "astrbot": astrbot_mod,
+        "astrbot.api": api_mod,
+        "astrbot.api.event": event_mod,
+        "astrbot.api.provider": provider_mod,
+        "astrbot.api.message_components": message_components_mod,
+        "astrbot.core": core_mod,
+        "astrbot.core.agent": agent_mod,
+        "astrbot.core.agent.message": agent_message_mod,
+    }
+
+
+def load_plugin_module():
+    with patch.dict(sys.modules, install_astrbot_stubs()):
+        spec = importlib.util.spec_from_file_location("context_aware_main", PLUGIN_PATH)
+        module = importlib.util.module_from_spec(spec)
+        assert spec and spec.loader
+        sys.modules["context_aware_main"] = module
+        spec.loader.exec_module(module)
+        sys.modules.pop("context_aware_main", None)
+        return module
+
+
+class FakeContext:
+    def get_config(self, umo: str | None = None):
+        return {"wake_prefix": [], "provider_ltm_settings": {"group_icl_enable": False}}
+
+
+class FakeMessageObj:
+    message_id = "m1"
+    message = []
+
+
+class FakeEvent:
+    def __init__(self):
+        self.message_obj = FakeMessageObj()
+        self.message_str = ""
+        self.is_at_or_wake_command = False
+        self.unified_msg_origin = "aiocqhttp:group:200"
+        self.extras = {
+            "_gemini_stt_transcript": "大家等会儿看一下这个配置",
+            "_gemini_stt_cache_only": True,
+        }
+
+    def get_extra(self, key, default=None):
+        return self.extras.get(key, default)
+
+    def set_extra(self, key, value):
+        self.extras[key] = value
+
+    def get_sender_id(self):
+        return "100"
+
+    def get_sender_name(self):
+        return "Alice"
+
+    def get_self_id(self):
+        return "bot"
+
+    def get_messages(self):
+        return []
+
+    def get_message_outline(self):
+        return ""
+
+    def get_message_str(self):
+        return self.message_str
+
+    def is_private_chat(self):
+        return False
+
+
+class ContextAwareGeminiSTTTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.mod = load_plugin_module()
+
+    def test_image_cache_cleanup_keeps_unrelated_old_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            cache_dir = Path(root)
+            plugin = self.mod.Main(
+                FakeContext(),
+                {"image_cache_dir": str(cache_dir), "image_cache_ttl": 60},
+            )
+            cached = cache_dir / f"{self.mod.IMAGE_CACHE_PREFIX}{'a' * 32}.jpg"
+            unrelated = cache_dir / "old.jpg"
+            cached.write_bytes(b"cached")
+            unrelated.write_bytes(b"unrelated")
+            os.utime(cached, (0, 0))
+            os.utime(unrelated, (0, 0))
+
+            plugin._cleanup_image_cache(force=True)
+
+            self.assertFalse(cached.exists())
+            self.assertTrue(unrelated.exists())
+
+    async def test_gemini_stt_transcript_is_recorded_as_message(self):
+        plugin = self.mod.Main(FakeContext(), {"enable": True, "only_group_chat": True})
+        event = FakeEvent()
+
+        await plugin.on_message(event)
+
+        messages = plugin.get_recent_messages(event.unified_msg_origin, count=1)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["content"], "[语音转写] 大家等会儿看一下这个配置")
+
+    async def test_voice_transcript_counts_as_content(self):
+        plugin = self.mod.Main(FakeContext(), {"enable": True, "only_group_chat": True})
+        event = FakeEvent()
+
+        await plugin.on_message(event)
+
+        self.assertTrue(plugin._sessions.has_session(event.unified_msg_origin))
+
+    async def test_reset_and_new_commands_clear_before_command_is_recorded(self):
+        for command in ("reset", "new"):
+            plugin = self.mod.Main(FakeContext(), {"enable": True, "only_group_chat": True})
+            history = self.mod.MessageRecord(
+                msg_id=f"before-{command}",
+                sender_id="100",
+                sender_name="Alice",
+                content="旧上下文",
+                timestamp=1.0,
+            )
+            await plugin._sessions.add_message_async("aiocqhttp:group:200", history)
+
+            event = FakeEvent()
+            event.message_str = command
+            event.is_at_or_wake_command = True
+
+            await plugin.on_message(event)
+
+            self.assertFalse(plugin._sessions.has_session(event.unified_msg_origin))
+
+    async def test_cmdmask_target_clears_context_for_a_disguised_command(self):
+        plugin = self.mod.Main(FakeContext(), {"enable": True, "only_group_chat": True})
+        await plugin._sessions.add_message_async(
+            "aiocqhttp:group:200",
+            self.mod.MessageRecord(
+                msg_id="before-masked-reset",
+                sender_id="100",
+                sender_name="Alice",
+                content="旧上下文",
+                timestamp=1.0,
+            ),
+        )
+
+        event = FakeEvent()
+        event.message_str = "今天天气真好"
+        event.is_at_or_wake_command = True
+        event.extras.update(
+            {
+                self.mod.ExtraKeys.CMDMASK_APPLIED: True,
+                self.mod.ExtraKeys.CMDMASK_TARGET: "reset",
+            },
+        )
+
+        await plugin.on_message(event)
+
+        self.assertFalse(plugin._sessions.has_session(event.unified_msg_origin))
+
+    async def test_after_message_sent_keeps_marker_compatibility(self):
+        plugin = self.mod.Main(FakeContext(), {"enable": True, "only_group_chat": True})
+        await plugin._sessions.add_message_async(
+            "aiocqhttp:group:200",
+            self.mod.MessageRecord(
+                msg_id="before-marker",
+                sender_id="100",
+                sender_name="Alice",
+                content="旧上下文",
+                timestamp=1.0,
+            ),
+        )
+
+        event = FakeEvent()
+        event.is_at_or_wake_command = True
+        event.extras[self.mod.ExtraKeys.SESSION_CLEAN_GROUP] = True
+
+        await plugin.after_message_sent(event)
+
+        self.assertFalse(plugin._sessions.has_session(event.unified_msg_origin))
+
+    async def test_llm_request_fallback_and_message_handler_do_not_duplicate_voice(self):
+        plugin = self.mod.Main(FakeContext(), {"enable": True, "only_group_chat": True})
+        event = FakeEvent()
+        req = self.mod.ProviderRequest()
+
+        await plugin.on_llm_request(event, req)
+        await plugin.on_message(event)
+
+        messages = plugin.get_recent_messages(event.unified_msg_origin, count=5)
+        voice_messages = [
+            msg
+            for msg in messages
+            if msg["content"] == "[语音转写] 大家等会儿看一下这个配置"
+        ]
+        self.assertEqual(len(voice_messages), 1)
+        self.assertEqual(plugin._stats.messages_recorded, 1)
+
+    def test_scene_generator_injects_recent_voice_transcripts_outside_dialogue_flow(self):
+        generator = self.mod.SceneGenerator()
+        current = self.mod.MessageRecord(
+            msg_id="current",
+            sender_id="100",
+            sender_name="Alice",
+            content="@bot 更早的一条呢",
+            timestamp=100.0,
+            at_bot=True,
+            talking_to="bot",
+        )
+        voice = self.mod.MessageRecord(
+            msg_id="voice",
+            sender_id="100",
+            sender_name="Alice",
+            content="[语音转写] 我想测一下唱歌识别",
+            timestamp=1.0,
+        )
+        recent = self.mod.MessageRecord(
+            msg_id="recent",
+            sender_id="101",
+            sender_name="Bob",
+            content="普通聊天",
+            timestamp=99.0,
+        )
+
+        scene = generator.generate(
+            trigger_type=self.mod.TRIGGER_AT,
+            trigger_desc="被@",
+            current=current,
+            flow=[recent, current],
+            voice_flow=[voice, recent, current],
+            bot_status={},
+            participants=["Alice", "Bob"],
+        )
+
+        self.assertIn("<recent_voice_transcripts>", scene)
+        self.assertIn("[语音转写] 我想测一下唱歌识别", scene)
+
+    async def test_on_llm_request_keeps_voice_transcript_from_larger_window(self):
+        plugin = self.mod.Main(
+            FakeContext(),
+            {
+                "enable": True,
+                "only_group_chat": True,
+                "dialogue_window": 3,
+                "voice_context_window": 20,
+            },
+        )
+        event = FakeEvent()
+        req = self.mod.ProviderRequest()
+
+        records = [
+            self.mod.MessageRecord(
+                msg_id="voice",
+                sender_id="100",
+                sender_name="Alice",
+                content="[语音转写] 我想测一下唱歌识别",
+                timestamp=1.0,
+            )
+        ]
+        for i in range(10):
+            records.append(
+                self.mod.MessageRecord(
+                    msg_id=f"filler-{i}",
+                    sender_id=str(200 + i),
+                    sender_name=f"User{i}",
+                    content=f"普通聊天 {i}",
+                    timestamp=2.0 + i,
+                )
+            )
+        records.append(
+            self.mod.MessageRecord(
+                msg_id="current",
+                sender_id="100",
+                sender_name="Alice",
+                content="@bot 更早的一条呢",
+                timestamp=20.0,
+                at_bot=True,
+                talking_to="bot",
+            )
+        )
+        for record in records:
+            await plugin._sessions.add_message_async(event.unified_msg_origin, record)
+
+        await plugin.on_llm_request(event, req)
+
+        self.assertTrue(req.extra_user_content_parts)
+        scene = req.extra_user_content_parts[-1].text
+        self.assertIn("<recent_voice_transcripts>", scene)
+        self.assertIn("[语音转写] 我想测一下唱歌识别", scene)
+
+    async def test_lazy_caption_skips_placeholder_for_filtered_gif(self):
+        plugin = self.mod.Main(
+            FakeContext(),
+            {
+                "enable": True,
+                "image_caption": True,
+                "image_caption_lazy": True,
+                "show_recent_images_allow_gif": False,
+            },
+        )
+        calls: list[str] = []
+
+        async def fake_caption(url: str):
+            calls.append(url)
+            return "普通图片描述"
+
+        plugin._get_image_caption = fake_caption
+        message = self.mod.MessageRecord(
+            msg_id="img",
+            sender_id="100",
+            sender_name="Alice",
+            content="[图片][图片]",
+            timestamp=1.0,
+            has_image=True,
+            image_count=2,
+            has_gif=True,
+            gif_count=1,
+            image_urls=["https://example.com/a.gif", "https://example.com/b.jpg"],
+        )
+
+        updated = await plugin._lazy_caption_flow([message])
+
+        self.assertEqual(calls, ["https://example.com/b.jpg"])
+        self.assertEqual(updated[0].content, "[图片][图片: 普通图片描述]")
+
+    async def test_on_llm_request_does_not_lazy_caption_when_recent_images_hidden(self):
+        plugin = self.mod.Main(
+            FakeContext(),
+            {
+                "enable": True,
+                "only_group_chat": True,
+                "image_caption": True,
+                "image_caption_lazy": True,
+                "show_recent_images": False,
+            },
+        )
+        event = FakeEvent()
+        req = self.mod.ProviderRequest()
+        calls: list[str] = []
+
+        async def fake_caption(url: str):
+            calls.append(url)
+            return "不应生成"
+
+        plugin._get_image_caption = fake_caption
+        await plugin._sessions.add_message_async(
+            event.unified_msg_origin,
+            self.mod.MessageRecord(
+                msg_id="current",
+                sender_id="100",
+                sender_name="Alice",
+                content="@bot [图片]",
+                timestamp=1.0,
+                at_bot=True,
+                talking_to="bot",
+                has_image=True,
+                image_count=1,
+                image_urls=["https://example.com/image.jpg"],
+            ),
+        )
+
+        await plugin.on_llm_request(event, req)
+
+        self.assertEqual(calls, [])
+        scene = req.extra_user_content_parts[-1].text
+        self.assertNotIn("<recent_images>", scene)
+
+
+if __name__ == "__main__":
+    unittest.main()
