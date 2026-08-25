@@ -24,6 +24,6 @@ services:
       - "127.0.0.1:5099:5099"
     volumes:
       - ./start-no-vnc-password.sh:/root/start.sh:ro
-      - /home/developer/xtw_bot/snowluma/data:/app/data
-      - /home/developer/xtw_bot/.runtime/home/.config/QQ:/app/.config/QQ
-      - /home/developer/xtw_bot/snowluma/qq-data:/app/.local/share
+      - ${SNOWLUMA_DATA_DIR:-../../../../private/instance/snowluma-data/data}:/app/data
+      - ${QQ_CONFIG_DIR:-../../../../private/instance/qq-config}:/app/.config/QQ
+      - ${QQ_DATA_DIR:-../../../../private/instance/qq-data}:/app/.local/share

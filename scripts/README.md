@@ -19,4 +19,4 @@
 
 - `XTWBOT_START_TIMEOUT`：启动就绪等待秒数，默认 60。
 - `XTWBOT_STOP_TIMEOUT`：优雅停止等待秒数，默认 30。
-- `XTWBOT_ARCHIVE_ROOT`：备份归档根目录，默认 `/home/developer/xtw_bot_archive`。
+- `XTWBOT_ARCHIVE_ROOT`：备份归档根目录，默认使用项目根目录外的 `../backups`；部署时建议显式设置。

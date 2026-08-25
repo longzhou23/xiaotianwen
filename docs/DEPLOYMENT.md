@@ -1,6 +1,8 @@
-# xtw_bot 当前部署说明
+# 小天文当前部署说明
 
 最后核对：2026-08-20。
+
+本文只记录架构和运行约定；所有宿主机路径应通过部署环境注入，不应照抄旧机器的绝对路径。
 
 ## 当前架构
 
@@ -10,12 +12,12 @@ QQ / QQ 群
   -> AstrBot（消息编排、插件、模型与记忆）
 ```
 
-- 活动目录：`/home/developer/xtw_bot`
-- 历史归档：`/home/developer/xtw_bot_archive`
+- 公共代码目录：`${PROJECT_ROOT}/public`
+- 私有实例目录：`${PROJECT_ROOT}/private`
 - SnowLuma Compose 项目：`snowluma-live`
 - SnowLuma 容器：`snowluma`
 - SnowLuma 镜像：`snowluma-local:v1.14.8`
-- AstrBot 工作目录：`/home/developer/xtw_bot/astrobot`
+- AstrBot 工作目录：`${PROJECT_ROOT}/private/instance/astrobot-data`
 
 NapCat 已停用。其程序、Compose、AppImage 运行时、看门狗、日志转发脚本和历史日志均在归档目录中，不属于当前运行链路。
 
@@ -34,7 +36,7 @@ SnowLuma 容器使用以下宿主机路径：
 ## 管理命令
 
 ```bash
-cd /home/developer/xtw_bot
+cd "$PROJECT_ROOT/public"
 
 # 查看 AstrBot、SnowLuma 和关键监听端口
 ./bin/status
@@ -64,7 +66,7 @@ cd /home/developer/xtw_bot
 备份写入：
 
 ```text
-/home/developer/xtw_bot_archive/backups/current/
+${BACKUP_ROOT:-$PROJECT_ROOT/backups}/current/
 ```
 
 ## 管理入口与日志
@@ -80,6 +82,6 @@ SnowLuma 的 5099 和 6081 端口当前只绑定在宿主机回环地址。需�
 
 ## 迁移要点
 
-迁移当前服务时只需复制 `/home/developer/xtw_bot` 或使用 `bin/backup` 生成的新备份；历史归档不影响机器人运行，可按保存策略单独迁移。
+迁移时分别复制公共仓库、私有实例仓库和主机 secret 文件；不要把运行时、日志或凭证重新塞回公共仓库。
 
 目标主机需要 Docker Compose，并需重新构建或导入 `snowluma-local:v1.14.8` 镜像。迁移后检查 `snowluma-live/compose.yml` 中的绝对路径、目标用户 UID/GID，以及 `.env` 文件权限。`.env`、QQ 数据、AstrBot 配置和日志可能包含凭据或隐私数据，不应公开。

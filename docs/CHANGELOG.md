@@ -7,7 +7,7 @@
 ### 变更：活动目录与历史归档分离
 
 - 以现场运行状态为准，确认 SnowLuma 已取代 NapCat 作为当前 QQ 接入层。
-- 将 NapCat、旧 SnowLuma 实验、历史备份、回滚快照、迁移文件和无关 npm 安装移动到 `/home/developer/xtw_bot_archive/`。
+- 将 NapCat、旧 SnowLuma 实验、历史备份、回滚快照、迁移文件和无关 npm 安装移动到独立的归档根目录。
 - 停止残留的 NapCat 看门狗和日志转发进程，保留运行中的 SnowLuma 与 AstrBot。
 - 重写 `bin/start`、`bin/stop`、`bin/status` 和 `bin/backup`，使其管理 SnowLuma Compose；新备份写入外部归档目录。
 - 为活动目录和归档目录分别增加 README，明确当前文件与历史文件边界。
