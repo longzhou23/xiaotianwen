@@ -1,6 +1,6 @@
 services:
   snowluma:
-    image: snowluma-local:v1.14.8
+    image: ${SNOWLUMA_IMAGE:-snowluma-local:v1.14.13}
     container_name: snowluma
     restart: unless-stopped
     shm_size: 1gb

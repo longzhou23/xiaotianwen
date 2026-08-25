@@ -16,7 +16,8 @@ QQ / QQ 群
 - 私有实例目录：`${PROJECT_ROOT}/private`
 - SnowLuma Compose 项目：`snowluma-live`
 - SnowLuma 容器：`snowluma`
-- SnowLuma 镜像：`snowluma-local:v1.14.8`
+- SnowLuma 镜像基线：`snowluma-local:v1.14.13`（实际运行标签以私有 `versions.env` 为准）
+- AstrBot 版本基线：`v4.27.4`（新机重新创建 Python 环境，不复用旧虚拟环境）
 - AstrBot 工作目录：`${PROJECT_ROOT}/private/instance/astrobot-data`
 
 NapCat 已停用。其程序、Compose、AppImage 运行时、看门狗、日志转发脚本和历史日志均在归档目录中，不属于当前运行链路。
@@ -84,4 +85,4 @@ SnowLuma 的 5099 和 6081 端口当前只绑定在宿主机回环地址。需�
 
 迁移时分别复制公共仓库、私有实例仓库和主机 secret 文件；不要把运行时、日志或凭证重新塞回公共仓库。
 
-目标主机需要 Docker Compose，并需重新构建或导入 `snowluma-local:v1.14.8` 镜像。迁移后检查 `snowluma-live/compose.yml` 中的绝对路径、目标用户 UID/GID，以及 `.env` 文件权限。`.env`、QQ 数据、AstrBot 配置和日志可能包含凭据或隐私数据，不应公开。
+目标主机需要 Docker Compose，并需按 [VERSION_POLICY.md](VERSION_POLICY.md) 解析稳定版本、重新构建或导入对应的 SnowLuma 镜像。迁移后检查 `snowluma-live/compose.yml` 中的绝对路径、目标用户 UID/GID，以及 `.env` 文件权限。`.env`、QQ 数据、AstrBot 配置和日志可能包含凭据或隐私数据，不应公开。

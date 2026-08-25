@@ -1,6 +1,6 @@
 # 自动部署脚本
 
-这些脚本面向 Ubuntu 24.04。第一版负责仓库拉取、依赖安装、实例数据恢复和插件源码布置；AstrBot 上游版本、Provider 映射和 systemd 服务注册仍需在目标机确认。
+这些脚本面向 Ubuntu 24.04。第一版负责仓库拉取、依赖安装、实例数据恢复和插件源码布置；AstrBot 上游版本、Provider 映射和 systemd 服务注册仍需在目标机确认。新机版本基线和升级顺序见 [`docs/VERSION_POLICY.md`](../docs/VERSION_POLICY.md)。
 
 ## 新机首次运行
 
@@ -23,6 +23,17 @@ bash deploy/bootstrap.sh
 ```
 
 若目标机已经预装依赖，可显式设置 `INSTALL_SYSTEM_DEPS=0`。脚本不会把 `GITHUB_TOKEN` 写入 remote URL；克隆完成后临时 `ASKPASS` 文件会被清理。
+
+## 新机版本锁定
+
+在安装核心程序和构建 SnowLuma 镜像前，先解析最新稳定标签并写入私有实例仓库：
+
+```bash
+VERSION_FILE=/opt/xiaotianwen/private/deployment/versions.env \
+  bash deploy/resolve-latest-versions.sh
+```
+
+之后按 `versions.env` 中的 `ASTRBOT_TAG` 和 `SNOWLUMA_TAG` 安装/构建。运行中的 Compose 使用具体镜像标签，不使用漂移的 `latest`。
 
 ## 更新与备份
 
