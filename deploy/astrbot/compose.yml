@@ -3,6 +3,8 @@ services:
     image: ${ASTRBOT_IMAGE:-soulter/astrbot:latest}
     container_name: astrbot
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
     environment:
       TZ: Asia/Shanghai
       PYTHONUNBUFFERED: "1"
@@ -13,3 +15,8 @@ services:
       - ${ASTRBOT_DATA_DIR:-../../../runtime/astrobot/data}:/AstrBot/data
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"

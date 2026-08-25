@@ -8,7 +8,8 @@ require_layout
 need git
 
 for repo in "$PUBLIC_DIR" "$PRIVATE_DIR"; do
-  git -C "$repo" diff --quiet || die "working tree is dirty: $repo"
+  [[ -z "$(git -C "$repo" status --porcelain)" ]] || die "working tree is dirty: $repo"
+  git -C "$repo" rev-parse --verify HEAD >/dev/null || die "repository has no valid HEAD: $repo"
   git -C "$repo" pull --ff-only
 done
 

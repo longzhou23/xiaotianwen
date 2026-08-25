@@ -31,12 +31,12 @@ ${PROJECT_ROOT}/runtime/deployed-images.env
 
 升级顺序固定为：
 
-1. 停止 AstrBot 和 SnowLuma；
-2. 创建实例备份并记录当前版本；
-3. 显式拉取两个官方 latest 镜像；
-4. 恢复实例数据和插件锁；
-5. 先做 AstrBot Dashboard、OneBot、SnowLuma WebUI 和消息链路检查；
-6. 检查通过后再切换服务；失败则恢复旧环境和旧镜像标签。
+1. 检查 secret、JSON、Compose、Docker 权限和剩余磁盘；
+2. 记录当前镜像 ID，并在旧服务仍运行时显式拉取两个 latest 镜像；
+3. 停止 AstrBot 和 SnowLuma，创建一致性 runtime 快照；
+4. 只同步锁定插件和 secret，不从 private 快照覆盖实时数据库；
+5. 启动新镜像，检查 AstrBot Dashboard、OneBot 403、SnowLuma WebUI 和 noVNC；
+6. 检查失败时尝试重新标记旧镜像并重建容器，同时保留更新前 runtime 快照供人工恢复。
 
 ## 回退原则
 

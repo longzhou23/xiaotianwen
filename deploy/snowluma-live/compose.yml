@@ -3,6 +3,8 @@ services:
     image: ${SNOWLUMA_IMAGE:-motricseven7/snowluma:latest}
     container_name: snowluma
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
     # The official image entrypoint runs non-executable commands through Node.
     # The bind-mounted compatibility script is intentionally invoked by Bash.
     command: ["bash", "/root/start.sh"]
@@ -14,8 +16,8 @@ services:
     extra_hosts:
       - host.docker.internal:host-gateway
     environment:
-      SNOWLUMA_UID: "1000"
-      SNOWLUMA_GID: "1000"
+      SNOWLUMA_UID: "${SNOWLUMA_UID:-1000}"
+      SNOWLUMA_GID: "${SNOWLUMA_GID:-1000}"
       SNOWLUMA_WEBUI_HOST: 0.0.0.0
       SNOWLUMA_WEBUI_PORT: "5099"
       SNOWLUMA_LOG_LEVEL: info
@@ -30,3 +32,8 @@ services:
       - ${SNOWLUMA_DATA_DIR:-../../../runtime/snowluma/data}:/app/data
       - ${QQ_CONFIG_DIR:-../../../runtime/snowluma/qq-config}:/app/.config/QQ
       - ${QQ_DATA_DIR:-../../../runtime/snowluma/qq-data}:/app/.local/share
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
