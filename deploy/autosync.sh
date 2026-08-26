@@ -45,8 +45,12 @@ sync_tree() {
   fi
   local mode='-a'
   [[ "$AUTOSYNC_DRY_RUN" == 1 ]] && mode='-anv'
-  rsync "$mode" --exclude='logs/' --exclude='cache/' --exclude='temp/' \
-    --exclude='thumb_cache/' --exclude='__pycache__/' --exclude='*.pyc' \
+  rsync "$mode" --exclude='logs/' --exclude='cache/' --exclude='.cache/' \
+    --exclude='temp/' --exclude='thumb_cache/' --exclude='__pycache__/' \
+    --exclude='attachments/' --exclude='codex/' --exclude='site-packages/' \
+    --exclude='webchat/' --exclude='plugin_data/*/models/' \
+    --exclude='plugin_data/*/tmp/' --exclude='plugin_data/*/temp/' \
+    --exclude='*.pyc' \
     --exclude='*.log' --exclude='*.tmp' --exclude='*.swp' \
     --exclude='plugins/' --exclude='config/' --exclude='cmd_config.json' \
     --exclude='mcp_server.json' --exclude='skills.json' \
