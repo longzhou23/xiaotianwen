@@ -1,6 +1,6 @@
 # 自动部署脚本
 
-这些脚本面向 Ubuntu 24.04。它们负责仓库拉取、依赖安装、实例数据恢复、插件源码布置，以及拉取和启动官方 AstrBot/SnowLuma `latest` 容器镜像。版本更新和回退规则见 [`docs/VERSION_POLICY.md`](../docs/VERSION_POLICY.md)。
+这些脚本面向 Ubuntu 24.04。它们负责仓库拉取、依赖安装、实例数据恢复、插件源码布置，以及拉取和启动官方 AstrBot/SnowLuma `latest` 容器镜像。启动 latest 镜像后还会把 Codex CLI 安装/校验到 AstrBot 的持久化数据挂载中。版本更新和回退规则见 [`docs/VERSION_POLICY.md`](../docs/VERSION_POLICY.md)。
 
 ## 新机首次运行
 
@@ -59,6 +59,21 @@ bash deploy/status.sh all      # 查看容器、重启次数和端口状态
 `start.sh` 使用 Compose 恢复已有容器，不会主动拉取 latest 镜像；需要升级镜像时使用
 `update.sh`。`stop.sh` 会给服务 30 秒优雅退出时间。
 
+每次 `bootstrap.sh` 或 `update.sh` 完成容器启动后，`up-latest.sh` 会调用
+`install-codex.sh`：在 AstrBot 容器内使用镜像自带的 Node/npm，将 `@openai/codex@latest`
+安装到 `/AstrBot/data/codex`，并执行 `codex --version` 校验。宿主机对应目录是
+`runtime/astrobot/data/codex`，因此容器重建不会删除 Codex 文件。该步骤不会自动登录
+Codex，也不会输出或生成登录凭据；登录应由运维者在持久化的 `CODEX_HOME` 中单独完成。
+
+可配置：
+
+```bash
+CODEX_PACKAGE=@openai/codex CODEX_VERSION=latest bash deploy/install-codex.sh
+```
+
+如果某个实例明确不使用 Codex，可以设置 `CODEX_INSTALL_REQUIRED=0` 跳过；默认值为 `1`，
+安装失败会使部署失败并触发既有的镜像回滚逻辑，避免产生“部署成功但插件实际找不到 Codex”的半可用状态。
+
 该命令会先拉取官方 `latest` 镜像，再重建两个容器并记录实际 image digest；普通 Docker/服务重启不执行镜像拉取。
 
 实例恢复与日常更新已经分离：
@@ -106,3 +121,38 @@ bash deploy/restore.sh /path/to/xiaotianwen-instance-YYYYMMDD-HHMMSS.tar.gz
 - `restore.sh` 先解压到临时目录，再复制到私有实例目录，不使用 `--delete`；
 - 生产环境恢复数据库前必须停止两个容器；恢复包会先检查绝对路径、`..` 和危险链接；
 - 在真正承诺“30 分钟全自动恢复”之前，需要在干净 VM 上进行一次完整演练并记录版本、耗时和失败回滚路径。
+
+## 每日自动同步到云端仓库
+
+`autosync.sh` 用于把运行时中允许保存的 AstrBot/SnowLuma 数据同步回 private 仓库，
+并把公共代码和私有实例分别提交、推送到各自的 `origin`。默认行为如下：
+
+- 默认在同步前停止两个容器，保证 SQLite/WAL、Iris 记忆和插件配置的一致性，完成后自动启动；
+- 默认不上传运行时 `config/`、`cmd_config.json`、`mcp_server.json`、`skills.json`、`qq-config`、`qq-data`、
+  密钥、`.env`、私钥、日志和缓存；QQ 数据只有显式设置
+  `AUTOSYNC_INCLUDE_QQ_DATA=1` 才会加入；
+- 私有仓库有未提交修改时直接退出，不覆盖人工编辑；
+- 只允许 public 仓库的代码、部署、脚本、配置模板和文档路径进入自动提交；
+- 提交前检查常见 API Key、GitHub Token 和私钥模式，命中就中止 push；
+- 通过部署锁避免与 update/backup 并发；push 依赖服务器上已经配置好的 SSH key 或 credential helper。
+
+先在服务器上进行不落盘、不提交的检查：
+
+```bash
+AUTOSYNC_DRY_RUN=1 bash deploy/autosync.sh
+```
+
+确认仓库 remote、Git 身份和排除范围都正确后，再安装每日定时任务。例如服务器已设为上海时区时，
+每天 03:30 执行：
+
+```bash
+bash deploy/install-autosync-cron.sh 03:30
+```
+
+定时任务日志写入 `runtime/logs/autosync.log`，锁文件为
+`runtime/.deploy/autosync.cron.lock`。卸载时用 `crontab -e` 删除
+`BEGIN/END XIAOTIANWEN AUTOSYNC` 标记之间的内容；不要直接清空整份 crontab。
+
+自动 push 只适合私有仓库和已完成访问控制的公共仓库。它不会自动登录 GitHub、Codex 或其他服务，
+也不会把 host secret 文件同步到云端。若不希望每日停机，可设置 `AUTOSYNC_QUIESCE=0`，但这时
+数据库和记忆文件是在线快照，恢复一致性由运维者自行承担。

@@ -95,6 +95,13 @@ deploy_started_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 docker compose --env-file "$compose_env" -p xiaotianwen-astrbot -f "$astrbot_compose" up -d --remove-orphans
 docker compose --env-file "$compose_env" -p xiaotianwen-snowluma -f "$snowluma_compose" up -d --remove-orphans
 
+# Install/verify Codex only after AstrBot is running. The package and its
+# CODEX_HOME live under the persistent /AstrBot/data mount, so recreating the
+# container does not remove them. Set CODEX_INSTALL_REQUIRED=0 for an instance
+# that deliberately does not use Codex.
+CODEX_INSTALL_REQUIRED=${CODEX_INSTALL_REQUIRED:-1} \
+  bash "$SCRIPT_DIR/install-codex.sh"
+
 if ! DEPLOY_STARTED_AT="$deploy_started_at" "$SCRIPT_DIR/verify.sh"; then
   log 'new deployment failed verification; attempting image rollback'
   [[ -n "$previous_astrbot_id" ]] && docker image tag "$previous_astrbot_id" "$ASTRBOT_IMAGE"

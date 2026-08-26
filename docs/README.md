@@ -13,19 +13,26 @@
 | `scripts/` | 安装、启停、诊断和日志脚本 | 公共脚本 |
 | `docs/` | 迁移、部署和设计文档 | 公共文档 |
 
+## 文档入口
+
+- [项目架构总览](ARCHITECTURE.md)：组件边界、消息管线、数据分层、插件职责、部署拓扑和恢复验收。
+- [部署说明](DEPLOYMENT.md)：当前 Docker/服务部署细节。
+- [迁移说明](MIGRATION.md)：公共代码、私有实例与新主机恢复流程。
+- [版本策略](VERSION_POLICY.md)：AstrBot、SnowLuma 和插件的版本管理。
+
 ## 日常命令
 
 ```bash
 cd "$PROJECT_ROOT/public"
-./bin/status
-./bin/doctor
-./bin/start
-./bin/stop
-./bin/restart
-./bin/logs all --tail 100
-./bin/backup
+./scripts/status
+./scripts/doctor
+./scripts/start
+./scripts/stop
+./scripts/restart all
+./scripts/logs all --tail 100
+./scripts/backup
 ```
 
-各命令的服务选择、日志跟随、备份输出目录和超时参数见 [bin/README.md](bin/README.md)。
+各命令的服务选择、日志跟随、备份输出目录和超时参数见 [scripts/README.md](../scripts/README.md)。
 
 私有实例的数据库、人格、知识库和 QQ 数据请按 [MIGRATION.md](MIGRATION.md) 从 private 仓库恢复。NapCat 已退休，不属于当前部署链路。
