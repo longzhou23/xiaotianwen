@@ -102,7 +102,7 @@ docker compose --env-file "$compose_env" -p xiaotianwen-snowluma -f "$snowluma_c
 CODEX_INSTALL_REQUIRED=${CODEX_INSTALL_REQUIRED:-1} \
   bash "$SCRIPT_DIR/install-codex.sh"
 
-if ! DEPLOY_STARTED_AT="$deploy_started_at" "$SCRIPT_DIR/verify.sh"; then
+if ! VERIFY_TIMEOUT="${VERIFY_TIMEOUT:-300}" DEPLOY_STARTED_AT="$deploy_started_at" "$SCRIPT_DIR/verify.sh"; then
   log 'new deployment failed verification; attempting image rollback'
   [[ -n "$previous_astrbot_id" ]] && docker image tag "$previous_astrbot_id" "$ASTRBOT_IMAGE"
   [[ -n "$previous_snowluma_id" ]] && docker image tag "$previous_snowluma_id" "$SNOWLUMA_IMAGE"
