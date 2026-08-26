@@ -57,7 +57,7 @@ sync_tree() {
     --exclude='plugins/' --exclude='config/' --exclude='cmd_config.json' \
     --exclude='mcp_server.json' --exclude='skills.json' \
     --exclude='.env' --exclude='*.pem' --exclude='*.key' \
-    --exclude='*.bak' --exclude='*.bak.*' \
+    --exclude='*.bak' --exclude='*.bak.*' --exclude='*.bak*' \
     "$source"/ "$target"/
 }
 
