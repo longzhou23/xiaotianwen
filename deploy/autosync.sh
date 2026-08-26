@@ -85,7 +85,10 @@ services_quiesced=0
 restart_after_sync() {
   if [[ "$services_quiesced" == 1 ]]; then
     log 'restarting services after automatic sync'
-    "$PUBLIC_DIR/deploy/start.sh" all || log 'warning: services did not restart cleanly; inspect deploy/status.sh'
+    # autosync already owns DEPLOY_LOCK; calling start.sh/stop.sh here would
+    # deadlock because those entry points acquire the same non-reentrant lock.
+    docker start astrbot snowluma >/dev/null \
+      || log 'warning: services did not restart cleanly; inspect deploy/status.sh'
   fi
 }
 trap restart_after_sync EXIT
@@ -94,7 +97,7 @@ if [[ "$AUTOSYNC_QUIESCE" == 1 ]]; then
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     log 'stopping AstrBot and SnowLuma for a consistent file/database snapshot'
     services_quiesced=1
-    "$PUBLIC_DIR/deploy/stop.sh" all
+    docker stop astrbot snowluma >/dev/null
   else
     die 'Docker is unavailable; set AUTOSYNC_QUIESCE=0 only if an online snapshot is acceptable'
   fi
