@@ -129,7 +129,7 @@ bash deploy/restore.sh /path/to/xiaotianwen-instance-YYYYMMDD-HHMMSS.tar.gz
 
 - 默认在同步前停止两个容器，保证 SQLite/WAL、Iris 记忆和插件配置的一致性，完成后自动启动；
 - 默认不上传运行时 `config/`、`cmd_config.json`、`mcp_server.json`、`skills.json`、`qq-config`、`qq-data`、
-  Codex 安装目录、附件、Web 运行时、模型缓存、密钥、`.env`、私钥、日志和缓存；QQ 数据只有显式设置
+  Codex 安装目录、Codex 插件运行目录、附件、Web 运行时/会话密钥、模型缓存、插件备份、密钥、`.env`、私钥、日志和缓存；QQ 数据只有显式设置
   `AUTOSYNC_INCLUDE_QQ_DATA=1` 才会加入；
 - 私有仓库有未提交修改时直接退出，不覆盖人工编辑；
 - 只允许 public 仓库的代码、部署、脚本、配置模板和文档路径进入自动提交；
