@@ -214,7 +214,11 @@ for path in paths:
         for source in document.get("provider_sources", []):
             secret_name = source_secret_names.get(source.get("id"))
             if secret_name and values.get(secret_name):
-                source["key"] = values[secret_name]
+                # AstrBot 4.27.x 的 OpenAI 适配器按多 Key 列表处理
+                # provider source；单个字符串会在请求时触发
+                # ``'str' object has no attribute 'copy'``，导致 VLM、
+                # 情绪分析和普通 SiliconFlow 请求全部失败。
+                source["key"] = [values[secret_name]]
                 changed_structurally = True
         for provider in document.get("provider", []):
             provider_id = provider.get("id")
