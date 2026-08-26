@@ -8,6 +8,13 @@ services:
     # The official image entrypoint runs non-executable commands through Node.
     # The bind-mounted compatibility script is intentionally invoked by Bash.
     command: ["bash", "/root/start.sh"]
+    # Keep SnowLuma and AstrBot on a shared Docker network.  The OneBot
+    # reverse-WebSocket client then uses the stable service name `astrbot`
+    # instead of the host-gateway address (which can be unavailable when the
+    # default docker0 bridge is down).
+    networks:
+      - default
+      - astrbot
     shm_size: 1gb
     cap_add:
       - SYS_PTRACE
@@ -37,3 +44,8 @@ services:
       options:
         max-size: 20m
         max-file: "3"
+
+networks:
+  astrbot:
+    external: true
+    name: xiaotianwen-astrbot_default
