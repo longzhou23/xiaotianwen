@@ -8,6 +8,11 @@ services:
     environment:
       TZ: Asia/Shanghai
       PYTHONUNBUFFERED: "1"
+      # Codex CLI is installed under the persistent AstrBot data mount so it
+      # survives container recreation.  Keep auth/config in CODEX_HOME rather
+      # than baking credentials into the image or repository.
+      CODEX_HOME: /AstrBot/data/codex/home
+      PATH: /AstrBot/data/codex/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
     ports:
       - "${ASTRBOT_BIND_HOST:-0.0.0.0}:${ASTRBOT_DASHBOARD_PORT:-6200}:6200"
       - "${ASTRBOT_BIND_HOST:-0.0.0.0}:${ASTRBOT_ONEBOT_PORT:-8001}:8001"
