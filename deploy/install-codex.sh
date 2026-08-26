@@ -57,6 +57,11 @@ npm_version=$(run_in_astrbot npm --version | tr -d '\r\n')
 log "Codex install runtime: node=$node_version npm=$npm_version"
 
 codex_bin="$CODEX_INSTALL_PREFIX/bin/codex"
+codex_home="$CODEX_INSTALL_PREFIX/home"
+# Keep Codex authentication/configuration on the persistent AstrBot data
+# mount.  npm otherwise warns that CODEX_HOME is missing and may skip creating
+# the expected PATH aliases during a fresh deployment.
+run_in_astrbot mkdir -p "$codex_home"
 if [[ "$CODEX_FORCE_INSTALL" != 1 ]] && run_in_astrbot test -x "$codex_bin"; then
   if installed_version=$(run_in_astrbot "$codex_bin" --version 2>/dev/null | head -n 1); then
     [[ -n "$installed_version" ]] || installed_version='version command returned no text'
