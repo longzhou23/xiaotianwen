@@ -234,12 +234,18 @@ for path in paths:
             changed_structurally = True
         for platform in document.get("platform", []):
             if platform.get("type") == "aiocqhttp":
+                platform["ws_reverse_host"] = "0.0.0.0"
+                platform["ws_reverse_port"] = 8001
                 platform["ws_reverse_token"] = astrbot_token
                 changed_structurally = True
 
     if path.name.startswith("onebot") and isinstance(document, dict):
-        for client in document.get("networks", {}).get("wsClients", []):
-            if client.get("name") == "astrbot":
+        clients = document.get("networks", {}).get("wsClients", [])
+        for client in clients:
+            # Per-account SnowLuma snapshots may omit the display name.  A
+            # single client is still the AstrBot connection for this instance.
+            if client.get("name") == "astrbot" or len(clients) == 1:
+                client["url"] = "ws://astrbot:8001/ws"
                 client["accessToken"] = snowluma_token
                 changed_structurally = True
 
