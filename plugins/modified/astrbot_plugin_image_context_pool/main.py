@@ -46,6 +46,8 @@ class CachedImage:
 class Main(star.Star):
     """只负责图片缓存和后续文字请求的图片回放。"""
 
+    _KV_POOL_KEY = "image_context_pool_entries"
+
     def __init__(self, context: star.Context, config: Any | None = None) -> None:
         super().__init__(context)
         self._context = context
@@ -71,6 +73,7 @@ class Main(star.Star):
             self._cache_dir = ""
         self._pool: dict[str, deque[CachedImage]] = {}
         self._download_locks: dict[str, asyncio.Lock] = {}
+        self._persist_lock = asyncio.Lock()
         self._reference_pattern = re.compile(
             r"(这个|这张|那张|上面|刚刚|图片|照片|原图|解析|看看|看下|看一下|星空|图|表情包|贴纸|反应图|meme|emoji)",
             re.IGNORECASE,
@@ -83,6 +86,70 @@ class Main(star.Star):
             f"[ImageContextPool] 已加载 | 启用: {self._enabled} | "
             f"每会话 {self._pool_size} 张 | TTL {self._pool_ttl}s"
         )
+
+    async def initialize(self) -> None:
+        """恢复尚未过期的图片索引，让重启后仍可引用最近图片。
+
+        图片本身仍以文件形式保存在 plugin_data 中；KV 只保存图片 ID、描述
+        和稳定副本路径。文件被清理后会在加载时自动丢弃对应索引。
+        """
+        try:
+            data = await self.get_kv_data(self._KV_POOL_KEY, {})
+            if isinstance(data, dict):
+                for session_id, raw_entries in data.items():
+                    if not isinstance(session_id, str) or not isinstance(raw_entries, list):
+                        continue
+                    restored: deque[CachedImage] = deque(maxlen=self._pool_size)
+                    for raw in raw_entries:
+                        if not isinstance(raw, dict):
+                            continue
+                        try:
+                            entry = CachedImage(
+                                image_id=str(raw.get("image_id", "")),
+                                message_id=str(raw.get("message_id", "")),
+                                local_path=str(raw.get("local_path", "")),
+                                original_ref=str(raw.get("original_ref", "")),
+                                sender_name=str(raw.get("sender_name", "")),
+                                timestamp=float(raw.get("timestamp", 0)),
+                                description=str(raw.get("description", "")),
+                            )
+                        except (TypeError, ValueError):
+                            continue
+                        if entry.image_id and entry.local_path:
+                            restored.append(entry)
+                    if restored:
+                        self._pool[session_id] = restored
+            before = sum(len(entries) for entries in self._pool.values())
+            self._prune()
+            after = sum(len(entries) for entries in self._pool.values())
+            if before != after:
+                await self._persist()
+            logger.info(
+                f"[ImageContextPool] 已恢复 {after} 张持久化图片索引"
+            )
+        except Exception as exc:
+            logger.warning(f"[ImageContextPool] 恢复持久化索引失败: {exc}")
+
+    async def _persist(self) -> None:
+        """持久化图片索引，不写入图片二进制内容。"""
+        data = {
+            session_id: [
+                {
+                    "image_id": entry.image_id,
+                    "message_id": entry.msg_id,
+                    "local_path": entry.local_path,
+                    "original_ref": entry.original_ref,
+                    "sender_name": entry.sender_name,
+                    "timestamp": entry.timestamp,
+                    "description": entry.description,
+                }
+                for entry in entries
+            ]
+            for session_id, entries in self._pool.items()
+            if entries
+        }
+        async with self._persist_lock:
+            await self.put_kv_data(self._KV_POOL_KEY, data)
 
     def _cfg(self, key: str, default: Any = None) -> Any:
         if self._config is None:
@@ -258,11 +325,11 @@ class Main(star.Star):
             else:
                 self._pool.pop(sid, None)
 
-    def _capture_descriptions(self, session_id: str, req: ProviderRequest) -> None:
+    def _capture_descriptions(self, session_id: str, req: ProviderRequest) -> int:
         """从 ContextAware 已生成的场景块提取首次 VLM 描述并绑定图片 ID。"""
         pool = self._pool.get(session_id)
         if not pool:
-            return
+            return 0
         blocks: list[tuple[str, str]] = []
         for part in getattr(req, "extra_user_content_parts", None) or []:
             text = getattr(part, "text", None)
@@ -273,10 +340,23 @@ class Main(star.Star):
                 sender_match = re.search(r"sender=\"([^\"]*)\"", attrs)
                 sender = html.unescape(sender_match.group(1)) if sender_match else ""
                 clean_body = html.unescape(re.sub(r"<[^>]+>", "", body)).strip()
-                caption_match = re.search(r"\[(?:图片|表情包)\s*[:：]\s*(.+?)\]", clean_body)
-                caption = caption_match.group(1).strip() if caption_match else clean_body
-                if caption and caption not in {"[图片]", "图片"}:
-                    blocks.append((sender, caption[:160]))
+                # 一条消息可能包含多张图片。SceneGenerator 会把它们压进同一个
+                # `<image count="N">` 节点，因此必须按 `[图片: ...]` 标记拆开，
+                # 不能把整段内容错误地绑定到第一张图。
+                captions = [
+                    item.strip()
+                    for item in re.findall(
+                        r"\[(?:图片|表情包)\s*[:：]\s*(.+?)\]",
+                        clean_body,
+                    )
+                    if item.strip()
+                ]
+                if captions:
+                    blocks.extend((sender, caption[:160]) for caption in captions)
+                    continue
+                if clean_body and clean_body not in {"[图片]", "图片"}:
+                    blocks.append((sender, clean_body[:160]))
+        bound = 0
         for sender, caption in blocks:
             candidates = [entry for entry in pool if not entry.description]
             if sender:
@@ -284,8 +364,10 @@ class Main(star.Star):
                 candidates = same_sender or candidates
             if candidates:
                 candidates[0].description = caption
+                bound += 1
         if blocks:
             logger.debug(f"[ImageContextPool] 已记录 {len(blocks)} 条首次 VLM 描述")
+        return bound
 
     def _append_index(self, req: ProviderRequest, entries: list[CachedImage]) -> None:
         existing_parts = getattr(req, "extra_user_content_parts", None) or []
@@ -376,6 +458,7 @@ class Main(star.Star):
             session_id = event.unified_msg_origin
             if self._is_reset(text):
                 self._pool.pop(session_id, None)
+                await self._persist()
                 return
             components = event.get_messages()
             images = list(self._iter_images(components))
@@ -406,6 +489,7 @@ class Main(star.Star):
                     )
                 )
             self._prune(session_id)
+            await self._persist()
             count = len(self._pool.get(session_id, ()))
             if count:
                 logger.info(f"[ImageContextPool] 图片缓存池写入: {count} 张")
@@ -429,12 +513,19 @@ class Main(star.Star):
             if not is_image_event and not is_reference:
                 return
             pool = self._pool.get(session_id)
+            logger.info(
+                f"[ImageContextPool] 请求检查 | 当前图片={'是' if is_image_event else '否'} | "
+                f"指代={'是' if is_reference else '否'} | "
+                f"缓存={len(pool or ())} | "
+                f"已有描述={sum(1 for entry in (pool or ()) if entry.description)}"
+            )
             if not pool:
                 return
 
             # ContextAware 的 on_llm_request(priority=-10) 已经先完成首次 VLM 描述；
             # 本插件在 -20 读取场景块，为图片缓存条目绑定描述和 ID。
-            self._capture_descriptions(session_id, req)
+            if self._capture_descriptions(session_id, req):
+                await self._persist()
             entries = list(pool)
             self._append_index(req, entries)
 

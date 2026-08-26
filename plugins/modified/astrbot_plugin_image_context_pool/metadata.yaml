@@ -1,7 +1,7 @@
 name: astrbot_plugin_image_context_pool
 display_name: 图片上下文缓存池
 desc: 缓存最近图片并在后续指代性文字请求中自动回放原图，避免防抖、分段或跨消息后丢失图片上下文。
-version: v1.1.1
+version: v1.1.2
 author: 小天文维护组
 astrbot_version: ">=4.24,<5"
 tags:
