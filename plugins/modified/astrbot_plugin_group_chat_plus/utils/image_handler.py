@@ -125,24 +125,25 @@ class ImageHandler:
                     f"检测到消息包含 {len(image_components)} 张图片, 是否有文字: {has_text}"
                 )
 
-            # === 第一步：检查图片处理开关 ===
-            # 如果不启用图片处理，所有带图片的消息都要过滤（不管是什么模式）
+            # === 第一步：检查图片转述开关 ===
+            # 关闭图片转述不等于丢弃图片。需要保留原始图片，让支持多模态
+            # 或星图工具的 Provider 继续收到图片；这里只跳过额外的 caption 请求。
             if not enable_image_processing:
                 if DEBUG_MODE:
-                    logger.info("图片处理未启用,过滤所有图片")
-                # 如果是纯图片消息,丢弃
-                if not has_text:
-                    if DEBUG_MODE:
-                        logger.info("检测到纯图片消息,但图片处理未启用,丢弃该消息")
-                    return False, "", [], False
-                else:
-                    # 如果是图文混合,移除图片只保留文字
-                    text_only = ImageHandler._extract_text_only(
-                        message_chain, self_id=self_id
+                    logger.info("图片转述未启用，保留原始图片并跳过caption")
+                image_urls = await ImageHandler._extract_image_urls(image_components)
+                text_content = ImageHandler._render_message_chain(
+                    message_chain,
+                    self_id=self_id,
+                    include_images=True,
+                ).strip()
+                if not text_content and image_urls:
+                    text_content = "[图片]"
+                if DEBUG_MODE:
+                    logger.info(
+                        f"保留原始图片: {len(image_urls)} 个，消息文本: {text_content[:80]}"
                     )
-                    if DEBUG_MODE:
-                        logger.info(f"移除图片后的消息: {text_only}")
-                    return True, text_only, [], False
+                return True, text_content, image_urls, bool(image_urls)
 
             # === 第二步：根据应用范围(image_to_text_scope)决定是否对当前消息启用图片转文字 ===
             scope = (image_to_text_scope or "all").strip().lower()

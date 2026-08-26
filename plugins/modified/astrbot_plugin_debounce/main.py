@@ -557,10 +557,10 @@ class DebouncePlugin(Star):
             has_media = _event_has_media(saved_event)
 
             # 纯图片事件没有 message_str，但仍应在安静窗口结束后触发一次请求。
+            # 不要为图片伪造自然语言正文。这个值会进入下一轮 ProviderRequest
+            # 并被记录成用户消息，容易表现成机器人自己发送了“请看看这张图片”。
             if not full_text and not has_media:
                 return
-            if not full_text and has_media:
-                full_text = "请看看这张图片。"
 
             logger.debug(f"[Debounce] 等待超时，伪造事件发送: {session_id}")
             
@@ -598,8 +598,10 @@ class DebouncePlugin(Star):
                 if not isinstance(component, Plain):
                     new_message_components.append(component)
             
-            # 在开头添加合并后的文本
-            new_message_components.insert(0, Plain(message_text))
+            # 只有确实存在用户文字时才添加 Plain。纯图片请求保留为纯媒体事件，
+            # 由 AstrBot/Provider 根据 Image 组件触发多模态请求。
+            if message_text:
+                new_message_components.insert(0, Plain(message_text))
             
             # 创建新消息对象
             new_message = await StarTools.create_message(

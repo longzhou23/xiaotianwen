@@ -1,0 +1,14 @@
+name: astrbot_plugin_chatgpt_codex
+source: https://github.com/longzhou23/astrbot_plugin_chatgpt_codex
+source_type: maintained-local-snapshot
+base_revision: fe4c740
+modified: true
+license: see plugin repository
+maintainer: xiaotianwen-maintainers
+review_status: local-snapshot-verified
+local_changes:
+  - Migrate persisted Provider modalities to text, image, audio, and tool_use.
+  - Preserve AstrBot Agent Runner tools for existing Provider records.
+  - Reject whitespace-only Responses Transport output as an empty response.
+  - Include regression tests for Provider modality migration and blank Transport output.
+local_reviewed_at: "2026-08-27"

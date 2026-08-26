@@ -5,3 +5,7 @@ modified: true
 license: see LICENSE in plugin directory
 maintainer: xiaotianwen-maintainers
 review_status: upstream-diff-required
+local_changes:
+  - Preserve original image references when image captioning is disabled or unavailable.
+  - Keep pure-image requests available to downstream AstrBot tools and providers.
+local_reviewed_at: "2026-08-27"

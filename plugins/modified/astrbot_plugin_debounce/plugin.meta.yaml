@@ -1,0 +1,11 @@
+name: astrbot_plugin_debounce
+source: https://github.com/advent259141/astrbot_plugin_debounce
+source_type: fork-or-local-modification
+modified: true
+license: see plugin metadata
+maintainer: xiaotianwen-maintainers
+review_status: upstream-diff-required
+local_changes:
+  - Preserve pure-media messages without inventing synthetic user text.
+  - Avoid adding a Plain component when a debounced message contains only attachments.
+local_reviewed_at: "2026-08-27"

@@ -1,0 +1,14 @@
+name: astrbot_plugin_astrmetry
+source: https://github.com/XCM42-Orion/astrbot_plugin_astrmetry
+source_type: fork-or-local-modification
+modified: true
+license: see plugin metadata
+maintainer: xiaotianwen-maintainers
+review_status: upstream-diff-required
+local_changes:
+  - Preserve current-request image sources before AstrBot media preprocessing.
+  - Support current image, local path, HTTP URL, file URI, and data URI inputs.
+  - Expose on-demand Astrometry analysis and annotated-image sending as AstrBot tools.
+  - Keep per-session analysis and annotation caches isolated and bounded.
+  - Add image-source regression tests.
+local_reviewed_at: "2026-08-27"

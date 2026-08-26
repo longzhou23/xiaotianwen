@@ -1,7 +1,0 @@
-name: astrbot_plugin_debounce
-source: https://github.com/advent259141/astrbot_plugin_debounce
-source_type: upstream
-modified: false
-license: see plugin metadata
-maintainer: upstream
-review_status: unverified

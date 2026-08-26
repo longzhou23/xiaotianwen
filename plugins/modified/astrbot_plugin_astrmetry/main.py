@@ -8,6 +8,8 @@ user uses /解析), which avoids sending every ordinary image to Astrometry.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
 import shutil
@@ -15,10 +17,10 @@ import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import aiofiles
 import aiohttp
-
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api import message_components as Comp
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -38,6 +40,8 @@ AUTO_FINAL_HINT_KEY = "_astrmetry_auto_final_hint_added"
 AUTO_ANNOTATION_PATH_KEY = "_astrmetry_annotation_path"
 AUTO_ANNOTATION_SENT_KEY = "_astrmetry_annotation_sent"
 AUTO_CONTEXT_INJECTED_KEY = "_astrmetry_recent_context_injected"
+AUTO_SEND_HINT_KEY = "_astrmetry_send_hint_added"
+REQUEST_IMAGE_SOURCES_KEY = "_astrmetry_request_image_sources"
 
 
 def _iter_segments(segments: list[Any] | None):
@@ -48,16 +52,56 @@ def _iter_segments(segments: list[Any] | None):
             yield from _iter_segments(segment.chain)
 
 
-def _find_image(event: AstrMessageEvent) -> Comp.Image | None:
-    for segment in _iter_segments(event.get_messages()):
-        if isinstance(segment, Comp.Image):
-            return segment
-    return None
+ImageSource = Comp.Image | str
 
 
-def _find_images(event: AstrMessageEvent) -> list[Comp.Image]:
-    """Return all images in the current message and quoted replies."""
-    return [segment for segment in _iter_segments(event.get_messages()) if isinstance(segment, Comp.Image)]
+def _image_source_value(image: ImageSource) -> str:
+    """Return a stable, non-logging key for an image component or URL/path."""
+    if isinstance(image, str):
+        return image.strip()
+    source = getattr(image, "url", None) or getattr(image, "file", None)
+    return str(source or "").strip()
+
+
+def _deduplicate_images(images: list[ImageSource]) -> list[ImageSource]:
+    """Preserve image order while removing duplicate component/URL sources."""
+    result: list[ImageSource] = []
+    seen: set[str] = set()
+    for image in images:
+        key = _image_source_value(image)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(image)
+    return result
+
+
+def _find_image(event: AstrMessageEvent) -> ImageSource | None:
+    images = _find_images(event)
+    return images[0] if images else None
+
+
+def _find_images(event: AstrMessageEvent) -> list[ImageSource]:
+    """Return only images attached to the current request, without history.
+
+    Group Chat Plus materializes current images and replaces the original
+    message components before the LLM hooks run.  The Astrometry hook snapshots
+    ProviderRequest.image_urls into REQUEST_IMAGE_SOURCES_KEY so the later tool
+    call can still access exactly those current-request images.
+    """
+    images: list[ImageSource] = [
+        segment
+        for segment in _iter_segments(event.get_messages())
+        if isinstance(segment, Comp.Image)
+    ]
+    request_sources = event.get_extra(REQUEST_IMAGE_SOURCES_KEY, []) or []
+    if isinstance(request_sources, (list, tuple)):
+        images.extend(
+            str(source).strip()
+            for source in request_sources
+            if isinstance(source, (str, os.PathLike)) and str(source).strip()
+        )
+    return _deduplicate_images(images)
 
 
 def _unwrap_event(event: AstrMessageEvent) -> AstrMessageEvent:
@@ -90,15 +134,14 @@ async def _json_response(
 
 
 async def _materialize_image(
-    image: Comp.Image,
+    image: ImageSource,
     destination: Path,
     session: aiohttp.ClientSession,
 ) -> None:
     """Copy a current-message image to a local file for upload."""
-    source = getattr(image, "url", None) or getattr(image, "file", None)
+    source = _image_source_value(image)
     if not source:
         raise RuntimeError("当前图片没有可下载的地址")
-    source = str(source)
     if source.startswith(("http://", "https://")):
         async with session.get(source) as response:
             if response.status >= 400:
@@ -107,6 +150,31 @@ async def _materialize_image(
         async with aiofiles.open(destination, "wb") as file:
             await file.write(content)
         return
+
+    if source.startswith("data:image/"):
+        try:
+            metadata, encoded = source.split(",", 1)
+            if ";base64" not in metadata:
+                raise ValueError("not base64")
+            content = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise RuntimeError("当前图片的 data URL 无法解析") from exc
+        async with aiofiles.open(destination, "wb") as file:
+            await file.write(content)
+        return
+
+    local_path = source
+    if source.startswith("file://"):
+        parsed = urlparse(source)
+        local_path = unquote(parsed.path)
+        if parsed.netloc:
+            local_path = f"//{parsed.netloc}{local_path}"
+    if os.path.isfile(local_path):
+        shutil.copyfile(local_path, destination)
+        return
+
+    if isinstance(image, str):
+        raise RuntimeError("当前请求中的图片路径已失效或不可访问")
 
     try:
         local_path = await image.convert_to_file_path()
@@ -213,9 +281,15 @@ class MyPlugin(Star):
         self.max_wait_seconds = max(
             30, min(int(config.get("max_wait_seconds", 100) or 100), 180)
         )
-        self.annotation_cache_ttl = max(300, int(config.get("annotation_cache_ttl", 86400) or 86400))
-        self.analysis_context_ttl = max(300, int(config.get("analysis_context_ttl", 604800) or 604800))
-        self.max_images_per_analysis = max(1, min(int(config.get("max_images_per_analysis", 6) or 6), 12))
+        self.annotation_cache_ttl = max(
+            300, int(config.get("annotation_cache_ttl", 86400) or 86400)
+        )
+        self.analysis_context_ttl = max(
+            300, int(config.get("analysis_context_ttl", 604800) or 604800)
+        )
+        self.max_images_per_analysis = max(
+            1, min(int(config.get("max_images_per_analysis", 6) or 6), 12)
+        )
         self.annotation_cache_dir = Path(
             os.path.join(
                 os.path.dirname(os.path.dirname(__file__)),
@@ -230,7 +304,9 @@ class MyPlugin(Star):
             logger.warning("[astrmetry] 无法创建标注图缓存目录：%s", exc)
         self._annotated_by_session: dict[str, dict[str, Any]] = {}
         self._analysis_by_session: dict[str, list[dict[str, Any]]] = {}
-        self.analysis_context_path = self.annotation_cache_dir.parent / "analysis_context.json"
+        self.analysis_context_path = (
+            self.annotation_cache_dir.parent / "analysis_context.json"
+        )
         self._load_analysis_context()
         logger.info(
             "[astrmetry] 已加载：auto_analyze_star_photos=%s, max_wait_seconds=%s, annotation_cache_ttl=%s",
@@ -238,12 +314,91 @@ class MyPlugin(Star):
             self.max_wait_seconds,
             self.annotation_cache_ttl,
         )
-        logger.info("[astrmetry] 深空解析上下文 TTL=%ss，单次最多解析图片数=%s", self.analysis_context_ttl, self.max_images_per_analysis)
+        logger.info(
+            "[astrmetry] 深空解析上下文 TTL=%ss，单次最多解析图片数=%s",
+            self.analysis_context_ttl,
+            self.max_images_per_analysis,
+        )
 
     @filter.on_llm_request(priority=-1000)
     async def _add_star_tool_hint(self, event: AstrMessageEvent, req) -> None:
         """Add recent Astrometry facts and an ephemeral tool-use hint."""
         self._inject_recent_analysis_context(event, req)
+
+        # Group Chat Plus converts the current Image components to local paths
+        # and clears its private event extras after rewriting the request.  Keep
+        # a private snapshot on this event so analyze_star_field can consume the
+        # same current-request images after the model calls the tool.
+        request_image_urls = getattr(req, "image_urls", None) or []
+        if isinstance(request_image_urls, (list, tuple)):
+            request_sources = [
+                str(source).strip()
+                for source in request_image_urls
+                if isinstance(source, (str, os.PathLike)) and str(source).strip()
+            ]
+            if request_sources:
+                existing_sources = event.get_extra(REQUEST_IMAGE_SOURCES_KEY, []) or []
+                merged_sources = [
+                    *(
+                        list(existing_sources)
+                        if isinstance(existing_sources, (list, tuple))
+                        else []
+                    ),
+                    *request_sources,
+                ]
+                event.set_extra(
+                    REQUEST_IMAGE_SOURCES_KEY,
+                    [
+                        _image_source_value(image)
+                        for image in _deduplicate_images(merged_sources)
+                    ],
+                )
+
+        # The model can see the tool schema but may still answer with text when
+        # the user explicitly asks for the cached image. Add a per-request hint
+        # only when a cache exists and the request clearly asks to send it. This
+        # does not send anything by itself and keeps ordinary image handling
+        # unchanged.
+        try:
+            message_text = str(event.get_message_str() or "")
+        except Exception:
+            message_text = ""
+        wants_annotation = any(
+            keyword in message_text
+            for keyword in ("标注", "解析图", "解算图", "annotated")
+        ) and any(
+            keyword in message_text
+            for keyword in ("发", "发送", "给我", "看看", "send")
+        )
+        current_images = _find_images(event)
+        cached_annotations = self._get_cached_annotations(event)
+        if current_images or wants_annotation:
+            logger.info(
+                "[astrmetry] LLM 请求检查：当前图片数=%s，"
+                "明确索要标注图=%s，缓存图片数=%s",
+                len(current_images),
+                wants_annotation,
+                len(cached_annotations),
+            )
+        if (
+            self.auto_hint
+            and wants_annotation
+            and cached_annotations
+            and not event.get_extra(AUTO_SEND_HINT_KEY)
+        ):
+            send_hint = (
+                "[标注图发送提示]\n"
+                "用户明确索要当前会话已经生成的标注图，且缓存可用。"
+                "必须调用 send_annotated_star_field 发送图片，不要只用文字代替，"
+                "不要输出服务器路径或内部文件名。工具成功后会直接结束本轮发送。"
+            )
+            extra_parts = getattr(req, "extra_user_content_parts", None)
+            if isinstance(extra_parts, list):
+                extra_parts.append(TextPart(text=send_hint).mark_as_temp())
+            else:
+                req.system_prompt = (req.system_prompt or "") + "\n" + send_hint
+            event.set_extra(AUTO_SEND_HINT_KEY, True)
+
         if not (self.auto_analyze and self.auto_hint):
             return
 
@@ -292,8 +447,10 @@ class MyPlugin(Star):
             if not isinstance(entries, list):
                 continue
             valid = [
-                item for item in entries
-                if isinstance(item, dict) and now - float(item.get("created_at", 0)) <= self.analysis_context_ttl
+                item
+                for item in entries
+                if isinstance(item, dict)
+                and now - float(item.get("created_at", 0)) <= self.analysis_context_ttl
             ]
             if valid:
                 self._analysis_by_session[str(session_id)] = valid[-3:]
@@ -303,12 +460,16 @@ class MyPlugin(Star):
         try:
             self.analysis_context_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.analysis_context_path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(self._analysis_by_session, ensure_ascii=False, indent=2))
+            temporary.write_text(
+                json.dumps(self._analysis_by_session, ensure_ascii=False, indent=2)
+            )
             temporary.replace(self.analysis_context_path)
         except OSError as exc:
             logger.warning("[astrmetry] 保存深空解析上下文失败：%s", exc)
 
-    def _remember_analysis(self, event: AstrMessageEvent, result: dict[str, Any]) -> None:
+    def _remember_analysis(
+        self, event: AstrMessageEvent, result: dict[str, Any]
+    ) -> None:
         """Remember the latest compact facts so later turns can refer to the image."""
         session_id = str(event.unified_msg_origin)
         record = {
@@ -328,7 +489,11 @@ class MyPlugin(Star):
         entries.append(record)
         self._analysis_by_session[session_id] = entries[-3:]
         self._save_analysis_context()
-        logger.info("[astrmetry] 已保存深空解析上下文：会话=%s，目标=%s", session_id, record["objects"])
+        logger.info(
+            "[astrmetry] 已保存深空解析上下文：会话=%s，目标=%s",
+            session_id,
+            record["objects"],
+        )
 
     def _inject_recent_analysis_context(self, event: AstrMessageEvent, req) -> None:
         """Inject recent plate-solving facts as temporary user context."""
@@ -337,7 +502,8 @@ class MyPlugin(Star):
         session_id = str(event.unified_msg_origin)
         now = time.time()
         entries = [
-            item for item in self._analysis_by_session.get(session_id, [])
+            item
+            for item in self._analysis_by_session.get(session_id, [])
             if now - float(item.get("created_at", 0)) <= self.analysis_context_ttl
         ]
         self._analysis_by_session[session_id] = entries[-3:]
@@ -361,7 +527,9 @@ class MyPlugin(Star):
                     f"标注图缓存：{'可发送' if item.get('annotation_cached') else '不可用'}",
                 ]
             )
-        lines.append("使用要求：用户提到‘之前那张’‘刚才的深空图’或其中的天体时，可按图片编号引用这些事实；标注图链接仅供内部定位/发送，除非用户明确要求链接，否则不要原样输出。]")
+        lines.append(
+            "使用要求：用户提到‘之前那张’‘刚才的深空图’或其中的天体时，可按图片编号引用这些事实；标注图链接仅供内部定位/发送，除非用户明确要求链接，否则不要原样输出。]"
+        )
         content = "\n".join(lines)
         extra_parts = getattr(req, "extra_user_content_parts", None)
         if isinstance(extra_parts, list):
@@ -396,7 +564,9 @@ class MyPlugin(Star):
         logger.info("[astrmetry] 标注图已缓存：%s", path.name)
         return str(path)
 
-    def _get_cached_annotations(self, event: AstrMessageEvent, all_images: bool = False) -> list[str]:
+    def _get_cached_annotations(
+        self, event: AstrMessageEvent, all_images: bool = False
+    ) -> list[str]:
         session_id = str(event.unified_msg_origin)
         now = time.time()
         paths = [
@@ -409,7 +579,11 @@ class MyPlugin(Star):
         ]
         if not paths:
             record = self._annotated_by_session.get(session_id)
-            if record and now - float(record.get("created_at", 0)) <= self.annotation_cache_ttl:
+            if (
+                record
+                and now - float(record.get("created_at", 0))
+                <= self.annotation_cache_ttl
+            ):
                 path = str(record.get("path") or "")
                 if path and os.path.isfile(path):
                     paths = [path]
@@ -421,7 +595,7 @@ class MyPlugin(Star):
 
     async def _analyze_image(
         self,
-        image: Comp.Image,
+        image: ImageSource,
         *,
         include_annotation: bool = False,
     ) -> dict[str, Any]:
@@ -510,9 +684,7 @@ class MyPlugin(Star):
             + self._format_result(result)
             + "\n回复要求：请结合当前图片、对话上下文和系统 persona 自然回应用户；"
             "不要原样复述本资料，不要输出 jobid、原始字段名或 Astrometry.net 链接，"
-            "除非用户明确要求查看技术解析结果。"
-            + annotation_hint
-            + "]"
+            "除非用户明确要求查看技术解析结果。" + annotation_hint + "]"
         )
 
     @filter.llm_tool(name="analyze_star_field")
@@ -536,7 +708,11 @@ class MyPlugin(Star):
         if not images:
             return "当前消息没有可供天文分析的图片。"
         if len(images) > self.max_images_per_analysis:
-            logger.info("[astrmetry] 当前消息包含 %s 张图片，仅解析前 %s 张", len(images), self.max_images_per_analysis)
+            logger.info(
+                "[astrmetry] 当前消息包含 %s 张图片，仅解析前 %s 张",
+                len(images),
+                self.max_images_per_analysis,
+            )
             images = images[: self.max_images_per_analysis]
         logger.info("[astrmetry] LLM 调用 analyze_star_field：图片数=%s", len(images))
         results: list[dict[str, Any]] = []
@@ -544,7 +720,9 @@ class MyPlugin(Star):
         for image_index, image in enumerate(images, 1):
             try:
                 result = await self._analyze_image(image, include_annotation=True)
-                result["annotation_path"] = await self._cache_annotation(event, result) or ""
+                result["annotation_path"] = (
+                    await self._cache_annotation(event, result) or ""
+                )
                 result["annotation_cached"] = bool(result["annotation_path"])
                 result["image_index"] = image_index
                 self._remember_analysis(event, result)
@@ -559,48 +737,67 @@ class MyPlugin(Star):
         event.set_extra(AUTO_RESULT_KEY, text)
         return text
 
-    def _format_tool_results(self, results: list[dict[str, Any]], failures: list[str] | None = None) -> str:
+    def _format_tool_results(
+        self, results: list[dict[str, Any]], failures: list[str] | None = None
+    ) -> str:
         """Format multiple image analyses while preserving each image link."""
         blocks = ["[内部天文分析资料｜仅供当前回复模型参考，禁止直接转发"]
         for result in results:
-            blocks.append(f"图片 {result.get('image_index', 1)}：\n" + self._format_result(result))
+            blocks.append(
+                f"图片 {result.get('image_index', 1)}：\n" + self._format_result(result)
+            )
         if failures:
             blocks.append("未完成的图片：" + "；".join(failures))
-        blocks.append("回复要求：结合图片编号、上下文和系统 persona 自然回应；不要原样复述 jobid、URL 或字段名。若用户想看标注图，可按需调用 send_annotated_star_field。]")
+        blocks.append(
+            "回复要求：结合图片编号、上下文和系统 persona 自然回应；不要原样复述 jobid、URL 或字段名。若用户想看标注图，可按需调用 send_annotated_star_field。]"
+        )
         return "\n".join(blocks)
 
     @filter.llm_tool(name="send_annotated_star_field")
-    async def send_annotated_star_field(self, event: AstrMessageEvent, all_images: bool = False):
+    async def send_annotated_star_field(
+        self, event: AstrMessageEvent, all_images: bool = False
+    ) -> str | None:
         """按用户要求发送最近一次 Astrometry 星空解析生成的标注图。
 
         仅在用户明确想查看、接收或发送标注图时调用。工具会直接发送图片，
         不要把服务器路径、临时文件名或 Astrometry.net URL 输出给用户。
+
+        成功发送后返回 None。AstrBot 会把 None 识别为工具已经直接向用户发
+        送消息并结束当前 Agent 回合，避免为了生成一句确认文本再次请求模型。
         """
         event = _unwrap_event(event)
         paths = self._get_cached_annotations(event, all_images=bool(all_images))
+        logger.info(
+            "[astrmetry] 收到发送标注图工具调用：all_images=%s，缓存图片数=%s",
+            bool(all_images),
+            len(paths),
+        )
         if not paths:
-            yield "目前没有可发送的标注图。请先对一张星空图片执行解析。"
-            return
+            return "目前没有可发送的标注图。请先对一张星空图片执行解析。"
         try:
             for path in paths:
                 await event.send(MessageChain([Comp.Image.fromFileSystem(path)]))
             event.set_extra(AUTO_ANNOTATION_SENT_KEY, True)
             logger.info("[astrmetry] 已按需发送 %s 张标注图", len(paths))
-            yield f"已发出 {len(paths)} 张标注图。请继续用自然语气回应用户，不要重复输出内部文件路径。"
+            return None
         except Exception as exc:
             logger.error("[astrmetry] 发送标注图失败：%s", exc, exc_info=True)
-            yield "标注图暂时发送失败，请稍后再试。"
+            return "标注图暂时发送失败，请稍后再试。"
 
     @filter.command("解析")
     async def analyse(self, event: AstrMessageEvent):
         """使用 /解析 手动提交当前或引用消息中的一张或多张图片。"""
         images = _find_images(event)
         if not images:
-            yield event.plain_result("未找到图片。请直接发送图片，或回复一张图片后发送 /解析。")
+            yield event.plain_result(
+                "未找到图片。请直接发送图片，或回复一张图片后发送 /解析。"
+            )
             return
         if len(images) > self.max_images_per_analysis:
             images = images[: self.max_images_per_analysis]
-        logger.info("%s 执行了手动天文解析，图片数=%s", event.get_sender_name(), len(images))
+        logger.info(
+            "%s 执行了手动天文解析，图片数=%s", event.get_sender_name(), len(images)
+        )
         results = []
         failures = []
         for image_index, image in enumerate(images, 1):
@@ -622,7 +819,12 @@ class MyPlugin(Star):
         if not event.is_private_chat():
             chain.append(Comp.At(qq=event.get_sender_id()))
         for result in results:
-            chain.append(Comp.Plain(f"图片 {result.get('image_index', 1)}：\n" + self._format_result(result)))
+            chain.append(
+                Comp.Plain(
+                    f"图片 {result.get('image_index', 1)}：\n"
+                    + self._format_result(result)
+                )
+            )
             annotation_path = result.get("annotation_path")
             annotated = result.get("annotated_bytes")
             if annotation_path and os.path.isfile(annotation_path):

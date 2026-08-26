@@ -11,20 +11,20 @@ plugins:
     modified: false
     review_status: unverified
   - name: astrbot_plugin_astrmetry
-    category: upstream
+    category: modified
     source: https://github.com/XCM42-Orion/astrbot_plugin_astrmetry
-    modified: false
-    review_status: unverified
+    modified: true
+    review_status: upstream-diff-required
   - name: astrbot_plugin_AtTool
     category: upstream
     source: https://github.com/nuomicici/astrbot_plugin_AtTool
     modified: false
     review_status: unverified
   - name: astrbot_plugin_debounce
-    category: upstream
+    category: modified
     source: https://github.com/advent259141/astrbot_plugin_debounce
-    modified: false
-    review_status: unverified
+    modified: true
+    review_status: upstream-diff-required
   - name: astrbot_plugin_iris_memory
     category: upstream
     source: https://github.com/leafliber/astrbot_plugin_iris_memory
@@ -60,6 +60,11 @@ plugins:
     source: https://github.com/muyouzhi6/astrbot_plugin_context_aware
     modified: true
     review_status: upstream-diff-required
+  - name: astrbot_plugin_chatgpt_codex
+    category: modified
+    source: https://github.com/longzhou23/astrbot_plugin_chatgpt_codex
+    modified: true
+    review_status: local-snapshot-verified
   - name: astrbot_plugin_group_chat_plus
     category: modified
     source: https://github.com/Him666233/astrbot_plugin_group_chat_plus
