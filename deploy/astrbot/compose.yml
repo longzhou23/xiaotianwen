@@ -2,6 +2,8 @@ services:
   astrbot:
     image: ${ASTRBOT_IMAGE:-soulter/astrbot:latest}
     container_name: astrbot
+    entrypoint: ["/bin/sh", "/AstrBot/data/plugin_page_compat.sh"]
+    command: ["python", "main.py"]
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
@@ -18,6 +20,7 @@ services:
       - "${ASTRBOT_BIND_HOST:-0.0.0.0}:${ASTRBOT_ONEBOT_PORT:-8001}:8001"
     volumes:
       - ${ASTRBOT_DATA_DIR:-../../../runtime/astrobot/data}:/AstrBot/data
+      - ./plugin_page_compat.sh:/AstrBot/data/plugin_page_compat.sh:ro
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     logging:

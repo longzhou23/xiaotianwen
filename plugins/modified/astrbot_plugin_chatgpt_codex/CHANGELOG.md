@@ -21,6 +21,7 @@ tags.
 - 按 `Website-Clone.zip` 提供的新版账户概览与设置页面更新前端，仅补充插件桥接脚本和实际 WebUI 路由。
 - 修复插件页面内的概览、设置导航，普通左键点击现在会正确切换宿主 AstrBot WebUI 页面，同时保留新标签页打开行为。
 - 修复设置页首次加载时缺少主题属性导致的白屏，页面现在会先以暗色主题渲染，再应用已保存的主题偏好。
+- 增加 AstrBot 4.27.4 插件页 iframe 兼容启动脚本，修复宿主安全头与 sandbox 组合导致的页面空白，并保留用户点击后的概览/设置页导航。
 - 修复非流式 Agent Runner 丢失 Responses function call 的问题；搜索、表情包和星图
   工具现在可以正常进入 AstrBot 的工具循环，不再被误判为空回复。
 - 对历史上下文中的重复图片和音频做去重，避免重复发送同一张表情包或天文图片。
@@ -40,6 +41,9 @@ tags.
   switches the host AstrBot WebUI page while new-tab behavior remains available.
 - Fixed the settings page white flash caused by a missing initial theme attribute;
   it now renders dark first and then applies the saved theme preference.
+- Added an AstrBot 4.27.4 plugin-page iframe compatibility startup shim to fix
+  blank pages caused by the host security headers and sandbox combination while
+  preserving user-activated overview/settings navigation.
 - Fixed non-streaming Agent Runner calls dropping Responses function calls; search,
   sticker, and star-field tools now reach AstrBot's tool loop instead of becoming
   empty assistant messages.
