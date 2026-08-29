@@ -71,9 +71,23 @@ class MaintenanceService:
                 await asyncio.sleep(self.CAPACITY_CONTROL_INTERVAL_SECONDS)
                 idx = await self.plugin.index_manager.load_index()
                 if len(idx) > self.plugin.plugin_config.max_reg_num:
+                    original_paths = set(idx)
                     handler = getattr(self.plugin, "event_handler", None)
                     if handler:
                         await handler._enforce_capacity(idx)
+
+                    # save_index/sync_index only upserts rows.  Persist removals
+                    # explicitly, otherwise stale and over-capacity records
+                    # reappear on the next hourly pass and may be selected even
+                    # though their files have already been deleted.
+                    removed_paths = sorted(original_paths - set(idx))
+                    db = getattr(self.plugin, "db_service", None)
+                    if removed_paths and db:
+                        removed_count = await db.delete_paths(removed_paths)
+                        logger.info(
+                            "[capacity] Persisted removal of "
+                            f"{removed_count} stale/over-capacity index rows"
+                        )
                     await self.plugin.index_manager.save_index(idx)
             except asyncio.CancelledError:
                 break

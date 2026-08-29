@@ -106,7 +106,7 @@ class Main(star.Star):
                         try:
                             entry = CachedImage(
                                 image_id=str(raw.get("image_id", "")),
-                                message_id=str(raw.get("message_id", "")),
+                                msg_id=str(raw.get("message_id", "")),
                                 local_path=str(raw.get("local_path", "")),
                                 original_ref=str(raw.get("original_ref", "")),
                                 sender_name=str(raw.get("sender_name", "")),

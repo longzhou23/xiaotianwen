@@ -788,6 +788,14 @@ class Main(Star):
                 yield "发送失败：reason=send_disabled。当前会话已禁用表情包发送功能，请不要继续调用发送工具。"
                 return
 
+            # A tool-capable model may issue several send_meme calls in one
+            # tool batch.  Only the first successful send belongs to this
+            # response; suppress later calls so one reply cannot spam several
+            # images before the model sees the first tool result.
+            if turn_state.is_active_sent():
+                yield "发送跳过：reason=already_sent。本轮已经发送过一个表情包，请不要重复调用发送工具。"
+                return
+
             if emoji_id is None:
                 yield "发送失败：reason=missing_id。缺少 emoji_id 参数。请先调用 search_emoji，再传入候选编号。"
                 return

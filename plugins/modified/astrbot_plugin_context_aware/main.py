@@ -429,6 +429,25 @@ def _caption_is_meme_marker(caption: str) -> bool:
     return normalized.startswith(("表情包", "贴纸", "反应图", "meme", "sticker"))
 
 
+def _caption_indicates_missing_image(caption: str) -> bool:
+    """Reject provider fallback text that confirms no image was received."""
+    normalized = re.sub(r"\s+", "", str(caption or "")).lower()
+    if not normalized:
+        return True
+    missing_markers = (
+        "未提供图片",
+        "未检测到图片",
+        "没有提供图片",
+        "没有检测到图片",
+        "无法看到图片",
+        "无法访问图片",
+        "noimageprovided",
+        "noimagewasprovided",
+        "imagewasnotprovided",
+    )
+    return any(marker in normalized for marker in missing_markers)
+
+
 
 def _format_caption(caption: str) -> str:
     """保留表情包类型和首次视觉摘要，避免只剩下空泛的表情包标记。"""
@@ -2855,8 +2874,15 @@ class Main(star.Star):
 
                 if response and response.completion_text:
                     elapsed = time.perf_counter() - t0
-                    self._image_caption_count += 1
                     caption = response.completion_text.strip()
+                    if _caption_indicates_missing_image(caption):
+                        self._image_caption_errors += 1
+                        logger.warning(
+                            "[ContextAware] 图像转述未收到有效图片，已丢弃空摘要"
+                        )
+                        self._mark_url_failed(cache_key)
+                        return None
+                    self._image_caption_count += 1
                     # 限制长度
                     if len(caption) > 100:
                         caption = caption[:97] + "..."
@@ -2987,6 +3013,8 @@ class Main(star.Star):
         gif_count = 0
         image_component_index = 0
         has_plain_text = False
+        seen_image_refs: set[str] = set()
+        empty_image_recorded = False
 
         if voice_transcript:
             parts.append(voice_transcript)
@@ -2998,8 +3026,19 @@ class Main(star.Star):
                 has_plain_text = True
                 parts.append(comp.text)
             elif isinstance(comp, Image):
-                image_count += 1
                 image_url = SceneAnalyzer._image_ref_from_component(comp)
+                if image_url:
+                    if image_url in seen_image_refs:
+                        logger.debug("[ContextAware] 跳过当前消息中的重复图片组件")
+                        continue
+                    seen_image_refs.add(image_url)
+                elif empty_image_recorded:
+                    logger.debug("[ContextAware] 跳过当前消息中的重复空图片组件")
+                    continue
+                else:
+                    empty_image_recorded = True
+
+                image_count += 1
                 is_gif = _image_ref_looks_like_gif(image_url)
                 if is_gif:
                     gif_count += 1
@@ -3034,11 +3073,13 @@ class Main(star.Star):
                         and self._image_caption_lazy
                         and (not is_gif or self._show_recent_images_allow_gif or is_platform_sticker)
                     )
-                    if should_download:
-                        local_path = await self._download_image_to_local(image_url)
-                        collected_local_paths.append(local_path or "")
-                    else:
-                        collected_local_paths.append("")  # placeholder
+                    # Keep local paths aligned one-to-one with non-empty URLs.
+                    if image_url:
+                        if should_download:
+                            local_path = await self._download_image_to_local(image_url)
+                            collected_local_paths.append(local_path or "")
+                        else:
+                            collected_local_paths.append("")  # placeholder
                     parts.append("[图片]")
 
         has_image = image_count > 0 or (
