@@ -97,10 +97,10 @@
 - [x] Private Instance Repository 已存在并连接远端 `main`。
 - [x] 公共代码、私有实例状态和主机 secrets 已建立基本边界。
 - [x] 部署侧已有预检、备份、健康检查、镜像摘要和更新失败回退。
-- [ ] 提交当前尚未提交的 Agent Loop P1 修改。
-- [ ] 在重构开始前创建可回退 tag。
-- [ ] 确认 Private Repository 工作区干净并记录对应 commit。
-- [ ] 记录 Public / Private / 镜像 digest / 配置版本的联合基线。
+- [x] 提交当前尚未提交的 Agent Loop P1 修改（Public commit `85c8b16`）。
+- [x] 在重构开始前创建可回退 tag（`pre-orchestrator-refactor-20260831`）。
+- [x] 确认 Private Repository 工作区干净并记录对应 commit（`143239f`）。
+- [x] 记录 Public / Private / 镜像 digest / 配置版本的联合基线（见 [P0-1 基线快照](#p0-1-提交和标记当前基线)）。
 
 ### 2.2 已确认的结构风险
 
@@ -415,14 +415,29 @@ ToolExecutionPolicy(
 
 ### P0-1 提交和标记当前基线
 
-- [ ] 审阅当前 P1 diff，只暂存本轮确认文件。
-- [ ] 运行 Codex Provider 完整 pytest。
-- [ ] 运行 `compileall`、JSON schema 校验和 `git diff --check`。
-- [ ] 创建独立 commit，不混入架构重构代码。
-- [ ] push Public Repository。
-- [ ] 确认 Private Repository 无未提交实例变更，必要时单独 snapshot。
-- [ ] 创建重构前 tag，例如 `pre-orchestrator-refactor-20260831`。
-- [ ] 记录 Azure 当前 Public commit、Private commit、容器 image digest。
+- [x] 审阅当前 P1 diff，只暂存本轮确认文件。
+- [x] 运行 Codex Provider 完整 pytest（102 passed）。
+- [x] 运行 `compileall`、JSON schema 结构/字段校验和 `git diff --check`。
+- [x] 创建独立 commit，不混入架构重构代码（`85c8b16`）。
+- [x] push Public Repository（`origin/main` 已更新）。
+- [x] 确认 Private Repository 无未提交实例变更，必要时单独 snapshot（工作区干净，`143239f` 与远端一致）。
+- [x] 创建重构前 tag（`pre-orchestrator-refactor-20260831`，指向 `85c8b16`）。
+- [x] 记录 Azure 当前 Public commit、Private commit、容器 image digest（见下表）。
+
+#### P0-1 基线快照（2026-08-31）
+
+通过 SSH 别名 `azure-xtw-01`（Azure VM `172.197.160.79`）读取；摘要不包含凭据、提示词正文或用户数据。
+
+| 项目 | 基线值 | 说明 |
+|---|---|---|
+| Public Repository（本次基线） | `85c8b16` | 已推送到 `origin/main`；完整提交为 `85c8b16` 开头的 commit |
+| Public Repository（Azure 当前已部署） | `850863e` | 服务器尚未切换到本次基线，作为重构前线上运行状态记录 |
+| Private Instance Repository | `143239f` | Azure 与本地/远端 `origin/main` 一致，工作区干净 |
+| AstrBot image | `soulter/astrbot@sha256:5d23f264ba9cb9b03a2bc1ef87f1ac87c03932aa99459b497afacb6a7c38aa8e` | 容器 `astrbot` 当前镜像摘要 |
+| SnowLuma image | `motricseven7/snowluma@sha256:9bf55db08bf293e76807e675118b708cc5fc5b987918b15d13a9b65e8d610b43` | 容器 `snowluma` 当前镜像摘要 |
+| 回退 tag | `pre-orchestrator-refactor-20260831` | Public commit `85c8b16` 的不可变标记 |
+
+校验记录：Codex Provider 全量测试 `102 passed in 5.25s`；Python `compileall` 通过；`_conf_schema.json` 解析及 25 个字段结构检查通过；本次暂存文件的 secret 扫描无命中；`git diff --cached --check` 通过。当前环境未安装通用 `jsonschema` 包，因此采用项目实际 schema 格式的 JSON 解析与字段约束检查。
 
 验收：
 
@@ -1061,7 +1076,7 @@ Programmatic Tool Calling：
 
 ### M0：可回退基线
 
-- [ ] 当前 P1 commit/push/tag 完成。
+- [x] 当前 P1 commit/push/tag 完成。
 - [ ] 回放样本、功能矩阵和指标基线完成。
 - [ ] Azure 回滚演练完成。
 
