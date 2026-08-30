@@ -7,6 +7,7 @@ import contextlib
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any
 
 from .codex_service import CodexService
@@ -96,24 +97,37 @@ def _is_ephemeral_session(session_id: str | None) -> bool:
     return not bool((session_id or "").strip())
 
 
-def _normalize_request_inputs(
+@dataclass(frozen=True)
+class _NormalizedRequestInputs:
+    """Provider-ready input plus the last user text before normalization.
+
+    ``ProviderRequest.assemble_context()`` may already have folded temporary
+    ``extra_user_content_parts`` into that user message.  Keeping the source
+    text lets the adapter suppress only that known duplicate on the way to the
+    transport; it is deliberately not a general conversation-text deduper.
+    """
+
+    prompt: str | None
+    contexts: list[dict[str, Any]]
+    last_user_text: str
+
+
+def _normalize_request_input_details(
     prompt: str | None,
     contexts: list[Message] | list[dict] | None,
-) -> tuple[str | None, list[dict]]:
-    """Split AstrBot's latest user message from its historical contexts.
-
-    AstrBot 4.27 normally passes the current user message as the final context
-    entry and leaves ``prompt`` unset.  Forwarding that shape unchanged makes
-    Codex receive an empty latest message and, after the first turn, lose every
-    subsequent user message because the historical bootstrap is intentionally
-    sent only once.
-    """
+) -> _NormalizedRequestInputs:
+    """Normalize AstrBot input while retaining the latest user source text."""
 
     plain = [
         item.model_dump() if hasattr(item, "model_dump") else item
         for item in (contexts or [])
         if isinstance(item, dict) or hasattr(item, "model_dump")
     ]
+    last_user_text = ""
+    for item in reversed(plain):
+        if isinstance(item, dict) and item.get("role") == "user":
+            last_user_text = CodexService._content_text(item.get("content")).strip()
+            break
     latest = (prompt or "").strip()
     if plain and isinstance(plain[-1], dict) and plain[-1].get("role") == "user":
         content = plain[-1].get("content")
@@ -130,7 +144,77 @@ def _normalize_request_inputs(
                 latest = candidate
         if candidate and candidate == latest and not _has_non_text_content(content):
             plain.pop()
-    return latest or None, plain
+    return _NormalizedRequestInputs(
+        prompt=latest or None,
+        contexts=plain,
+        last_user_text=last_user_text,
+    )
+
+
+def _normalize_request_inputs(
+    prompt: str | None,
+    contexts: list[Message] | list[dict] | None,
+) -> tuple[str | None, list[dict]]:
+    """Split AstrBot's latest user message from its historical contexts.
+
+    AstrBot 4.27 normally passes the current user message as the final context
+    entry and leaves ``prompt`` unset.  Forwarding that shape unchanged makes
+    Codex receive an empty latest message and, after the first turn, lose every
+    subsequent user message because the historical bootstrap is intentionally
+    sent only once.
+    """
+
+    details = _normalize_request_input_details(prompt, contexts)
+    return details.prompt, details.contexts
+
+
+def _extras_are_already_assembled(
+    request: _NormalizedRequestInputs,
+    extra_user_content_parts: list[ContentPart] | None,
+) -> bool:
+    """Recognize the exact temporary payload assembled by AstrBot once.
+
+    We only suppress a separately forwarded ``extra_user_content_parts`` list
+    when its complete canonical text appears as the *suffix* of the current
+    user message.  The length floor avoids treating a short ordinary user
+    phrase as a dynamic block.  This must not be replaced with global text
+    deduplication: users are allowed to repeat themselves.
+    """
+
+    extra_text = CodexService._extra_text(extra_user_content_parts).replace("\r\n", "\n").strip()
+    if len(extra_text) < 32:
+        return False
+    for value in (request.prompt, request.last_user_text):
+        candidate = (value or "").replace("\r\n", "\n").strip()
+        if candidate == extra_text or candidate.endswith("\n" + extra_text):
+            return True
+    return False
+
+
+def _request_route(
+    *,
+    session_id: str | None,
+    func_tool: ToolSet | None,
+    image_urls: list[str] | None,
+    audio_urls: list[str] | None,
+    kwargs: dict[str, Any],
+) -> str:
+    """Return a bounded, non-sensitive cache/metrics route label."""
+
+    allowed = {"agent", "chat", "decision", "proactive", "vision", "background"}
+    for key in ("request_route", "route", "llm_route", "call_type"):
+        value = kwargs.get(key)
+        if isinstance(value, str):
+            candidate = value.strip().lower().replace("-", "_")
+            if candidate in allowed:
+                return candidate
+    if func_tool is not None:
+        return "agent"
+    if image_urls or audio_urls:
+        return "vision"
+    if _is_ephemeral_session(session_id):
+        return "background"
+    return "chat"
 
 
 def _has_non_text_content(content: Any) -> bool:
@@ -371,24 +455,34 @@ if _ASTRBOT_AVAILABLE:
             extra_user_content_parts: list[ContentPart] | None = None,
             **kwargs: Any,
         ) -> LLMResponse:
-            del kwargs
             if session_id is None and _is_title_generation_request(prompt, contexts, system_prompt):
                 return LLMResponse(role="assistant", completion_text="<None>")
             session_key = _conversation_key(session_id)
             ephemeral = _is_ephemeral_session(session_id)
-            latest_prompt, historical_contexts = _normalize_request_inputs(prompt, contexts)
+            request_inputs = _normalize_request_input_details(prompt, contexts)
+            extra_parts_assembled = _extras_are_already_assembled(
+                request_inputs, extra_user_content_parts
+            )
             try:
                 events = self._service().stream_turn(
                     session_key=session_key,
-                    prompt=latest_prompt,
-                    contexts=historical_contexts,
+                    prompt=request_inputs.prompt,
+                    contexts=request_inputs.contexts,
                     system_prompt=system_prompt,
                     extra_user_content_parts=extra_user_content_parts,
+                    extra_parts_already_assembled=extra_parts_assembled,
                     image_urls=image_urls,
                     audio_urls=audio_urls,
                     tool_calls_result=tool_calls_result,
                     model=model or self.model_name,
                     tools=openai_tools_to_responses(func_tool),
+                    request_route=_request_route(
+                        session_id=session_id,
+                        func_tool=func_tool,
+                        image_urls=image_urls,
+                        audio_urls=audio_urls,
+                        kwargs=kwargs,
+                    ),
                 )
                 return await _collect_provider_response(events)
             finally:
@@ -410,25 +504,35 @@ if _ASTRBOT_AVAILABLE:
             extra_user_content_parts: list[ContentPart] | None = None,
             **kwargs: Any,
         ) -> AsyncGenerator[LLMResponse, None]:
-            del kwargs
             if session_id is None and _is_title_generation_request(prompt, contexts, system_prompt):
                 yield LLMResponse(role="assistant", completion_text="<None>", is_chunk=False)
                 return
             session_key = _conversation_key(session_id)
             ephemeral = _is_ephemeral_session(session_id)
-            latest_prompt, historical_contexts = _normalize_request_inputs(prompt, contexts)
+            request_inputs = _normalize_request_input_details(prompt, contexts)
+            extra_parts_assembled = _extras_are_already_assembled(
+                request_inputs, extra_user_content_parts
+            )
             try:
                 events = self._service().stream_turn(
                     session_key=session_key,
-                    prompt=latest_prompt,
-                    contexts=historical_contexts,
+                    prompt=request_inputs.prompt,
+                    contexts=request_inputs.contexts,
                     system_prompt=system_prompt,
                     extra_user_content_parts=extra_user_content_parts,
+                    extra_parts_already_assembled=extra_parts_assembled,
                     image_urls=image_urls,
                     audio_urls=audio_urls,
                     tool_calls_result=tool_calls_result,
                     model=model or self.model_name,
                     tools=openai_tools_to_responses(func_tool),
+                    request_route=_request_route(
+                        session_id=session_id,
+                        func_tool=func_tool,
+                        image_urls=image_urls,
+                        audio_urls=audio_urls,
+                        kwargs=kwargs,
+                    ),
                 )
                 async for response in _stream_provider_responses(events):
                     # AstrBot's Agent Runner requires the final non-chunk response to

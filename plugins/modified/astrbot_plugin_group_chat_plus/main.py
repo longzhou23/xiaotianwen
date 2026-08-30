@@ -1788,6 +1788,9 @@ class ChatPlus(Star):
         self.enable_tools_reminder = config.get(
             "enable_tools_reminder", False
         )  # 启用工具文本提醒（仅 prompt 文字，不影响实际工具注入）
+        self.skip_tools_reminder_when_native_tools_available = config.get(
+            "skip_tools_reminder_when_native_tools_available", True
+        )  # 原生 func_tool 已携带 schema 时不再重复注入全文工具列表
         self.tools_reminder_persona_filter = config.get(
             "tools_reminder_persona_filter", False
         )  # 工具按人格过滤（同时影响文本提醒和实际工具集，补偿平台因无 conversation 跳过的人格过滤）
@@ -3334,6 +3337,10 @@ class ChatPlus(Star):
             logger.info(f"  - 启用图片处理: {self.enable_image_processing}")
             logger.info(f"  - 启用记忆植入: {self.enable_memory_injection}")
             logger.info(f"  - 启用工具提醒: {self.enable_tools_reminder}")
+            logger.info(
+                "  - 原生工具时跳过文本工具提醒: "
+                f"{self.skip_tools_reminder_when_native_tools_available}"
+            )
             logger.info(f"  - 工具提醒按人格过滤: {self.tools_reminder_persona_filter}")
 
         # ========== 🆕 v1.2.0 AI回复内容过滤器初始化 ==========
@@ -3449,6 +3456,7 @@ class ChatPlus(Star):
             "livingmemory_persona_compat_mode": self.livingmemory_persona_compat_mode,
             # 工具提醒配置
             "enable_tools_reminder": self.enable_tools_reminder,
+            "skip_tools_reminder_when_native_tools_available": self.skip_tools_reminder_when_native_tools_available,
             "tools_reminder_persona_filter": self.tools_reminder_persona_filter,
             # 📦 消息缓存配置（用于主动对话读取缓存时过滤过期消息）
             "pending_cache_max_count": self.pending_cache_max_count,
@@ -11253,7 +11261,11 @@ class ChatPlus(Star):
             runtime_prompt_blocks.append(str(smart_batch_hint))
             if self.debug_mode:
                 logger.info("  ✅ 已追加 Smart 批次提示到临时用户内容")
-        if enable_tools_reminder and current_tools:
+        if (
+            enable_tools_reminder
+            and current_tools
+            and not self.skip_tools_reminder_when_native_tools_available
+        ):
             try:
                 from .utils.tools_reminder import (
                     ToolsReminder,
@@ -11299,6 +11311,10 @@ class ChatPlus(Star):
                     runtime_prompt_blocks.append(tools_block)
             except Exception as e:
                 logger.warning(f"⚠️ 生成工具提醒失败（将跳过提醒，不影响主流程）: {e}")
+        elif enable_tools_reminder and current_tools and self.debug_mode:
+            logger.info(
+                "  ℹ️ 当前请求已携带原生工具 schema，跳过重复的文本工具提醒"
+            )
 
         # P2: 情绪提示追加到临时用户内容（由 _generate_and_send_reply /
         # proactive_chat_manager 预先存入 event extra，此处统一处理）。

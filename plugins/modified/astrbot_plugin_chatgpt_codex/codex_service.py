@@ -651,6 +651,86 @@ class CodexService:
 
         return (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 
+    @staticmethod
+    def _canonical_json(value: Any) -> str:
+        """Serialize cache identity inputs deterministically without prompt text."""
+
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=lambda item: {"__type__": type(item).__name__},
+        )
+
+    @staticmethod
+    def _stable_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        """Keep equivalent top-level tool schemas in one deterministic order."""
+
+        return sorted(
+            [item for item in tools or [] if isinstance(item, dict)],
+            key=lambda item: (str(item.get("name", "")), str(item.get("type", ""))),
+        )
+
+    @classmethod
+    def _transport_cache_key(
+        cls,
+        *,
+        model: str,
+        request_route: str | None,
+        instructions: str,
+        tools: list[dict[str, Any]] | None,
+    ) -> str:
+        """Return a stable cache family for one compatible Responses prefix.
+
+        ``session_key`` is intentionally excluded.  It fragments otherwise
+        identical system/tool prefixes across groups, while grouping unrelated
+        Decision and main-reply calls from one group together.  Dynamic user
+        context is not an identity field: it remains in ``input`` and must be
+        allowed to vary within the same stable prefix.
+        """
+
+        allowed_routes = {"agent", "chat", "decision", "proactive", "vision", "background"}
+        route = (request_route or "chat").strip().lower()
+        if route not in allowed_routes:
+            route = "chat"
+        identity = {
+            "version": "xtw-agent-loop-p0-v1",
+            "model": model,
+            "route": route,
+            "instructions_sha256": hashlib.sha256(
+                instructions.encode("utf-8")
+            ).hexdigest(),
+            "tools_sha256": hashlib.sha256(
+                cls._canonical_json(cls._stable_tools(tools)).encode("utf-8")
+            ).hexdigest(),
+        }
+        return hashlib.sha256(cls._canonical_json(identity).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _input_text_occurrences(items: list[dict[str, Any]], needle: str) -> int:
+        """Count an already-known dynamic block without retaining its contents."""
+
+        if not needle:
+            return 0
+
+        count = 0
+
+        def visit(value: Any) -> None:
+            nonlocal count
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "text" and isinstance(child, str):
+                        count += child.count(needle)
+                    else:
+                        visit(child)
+            elif isinstance(value, list):
+                for child in value:
+                    visit(child)
+
+        visit(items)
+        return count
+
     @classmethod
     def _instructions_from_contexts(
         cls,
@@ -940,7 +1020,16 @@ class CodexService:
                 try:
                     from .transport.responses import _attachment_marker
 
-                    marker = _attachment_marker(value)
+                    part_type = str(value.get("type") or "").lower()
+                    # ``_attachment_marker`` intentionally falls back to a
+                    # text part's own text.  Adding that marker here would
+                    # duplicate every TextPart before the provider ever sees
+                    # it, so only append markers for non-text attachments.
+                    marker = (
+                        None
+                        if part_type in {"text", "input_text", "output_text"}
+                        else _attachment_marker(value)
+                    )
                 except ImportError:
                     marker = None
                 if marker:
@@ -1181,11 +1270,13 @@ class CodexService:
         contexts: list[dict[str, Any]] | None = None,
         system_prompt: str | None = None,
         extra_user_content_parts: list[Any] | None = None,
+        extra_parts_already_assembled: bool = False,
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
         tool_calls_result: Any = None,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        request_route: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Run one turn using the selected backend, with explicit auto fallback."""
 
@@ -1196,11 +1287,13 @@ class CodexService:
                 contexts=contexts,
                 system_prompt=system_prompt,
                 extra_user_content_parts=extra_user_content_parts,
+                extra_parts_already_assembled=extra_parts_already_assembled,
                 image_urls=image_urls,
                 audio_urls=audio_urls,
                 tool_calls_result=tool_calls_result,
                 model=model,
                 tools=tools,
+                request_route=request_route,
             ):
                 yield event
             return
@@ -1211,11 +1304,13 @@ class CodexService:
                 contexts=contexts,
                 system_prompt=system_prompt,
                 extra_user_content_parts=extra_user_content_parts,
+                extra_parts_already_assembled=extra_parts_already_assembled,
                 image_urls=image_urls,
                 audio_urls=audio_urls,
                 tool_calls_result=tool_calls_result,
                 model=model,
                 tools=tools,
+                request_route=request_route,
                 emit_deltas=True,
             ):
                 yield event
@@ -1227,11 +1322,13 @@ class CodexService:
                 contexts=contexts,
                 system_prompt=system_prompt,
                 extra_user_content_parts=extra_user_content_parts,
+                extra_parts_already_assembled=extra_parts_already_assembled,
                 image_urls=image_urls,
                 audio_urls=audio_urls,
                 tool_calls_result=tool_calls_result,
                 model=model,
                 tools=tools,
+                request_route=request_route,
                 emit_deltas=False,
             ):
                 yield event
@@ -1245,11 +1342,13 @@ class CodexService:
                 contexts=contexts,
                 system_prompt=system_prompt,
                 extra_user_content_parts=extra_user_content_parts,
+                extra_parts_already_assembled=extra_parts_already_assembled,
                 image_urls=image_urls,
                 audio_urls=audio_urls,
                 tool_calls_result=tool_calls_result,
                 model=model,
                 tools=tools,
+                request_route=request_route,
             ):
                 yield event
 
@@ -1261,11 +1360,13 @@ class CodexService:
         contexts: list[dict[str, Any]] | None = None,
         system_prompt: str | None = None,
         extra_user_content_parts: list[Any] | None = None,
+        extra_parts_already_assembled: bool = False,
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
         tool_calls_result: Any = None,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        request_route: str | None = None,
         emit_deltas: bool = True,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stateless Responses transport; AstrBot supplies the full history."""
@@ -1292,17 +1393,22 @@ class CodexService:
             previous_response_id = None
             continuation_contexts: list[dict[str, Any]] = []
             input_contexts = contexts
+            original_extra_parts = list(extra_user_content_parts or [])
+            forwarded_extra_parts = (
+                [] if extra_parts_already_assembled else original_extra_parts
+            )
+            original_dynamic_text = self._extra_text(original_extra_parts)
             include_latest = bool(
                 prompt
                 or image_urls
                 or audio_urls
-                or extra_user_content_parts
+                or forwarded_extra_parts
                 or not input_contexts
             )
             input_items = build_input_items(
                 input_contexts,
                 prompt,
-                extra_user_content_parts,
+                forwarded_extra_parts,
                 image_urls=image_urls,
                 audio_urls=audio_urls,
                 tool_calls_result=tool_calls_result,
@@ -1317,8 +1423,34 @@ class CodexService:
                 role = item.get("role") if isinstance(item, dict) else None
                 role_name = str(role or "unknown")
                 context_role_counts[role_name] = context_role_counts.get(role_name, 0) + 1
+            allowed_routes = {
+                "agent",
+                "chat",
+                "decision",
+                "proactive",
+                "vision",
+                "background",
+            }
+            route = (request_route or "chat").strip().lower()
+            if route not in allowed_routes:
+                route = "chat"
+            stable_tools = self._stable_tools(tools)
+            tool_schema_json = self._canonical_json(stable_tools)
+            cache_key = self._transport_cache_key(
+                model=selected_model,
+                request_route=route,
+                instructions=instructions,
+                tools=stable_tools,
+            )
+            session_record = await self.sessions.get(session_key)
+            try:
+                round_index = max(1, int((session_record or {}).get("turn_count", 0)) + 1)
+            except (TypeError, ValueError):
+                round_index = 1
             context_diagnostics = {
                 "backend": "transport",
+                "route": route,
+                "round_index": round_index,
                 "history_items": len(input_contexts or []),
                 "history_role_counts": context_role_counts,
                 "input_item_type_counts": input_type_counts,
@@ -1328,17 +1460,35 @@ class CodexService:
                     if instructions
                     else None
                 ),
-                "dynamic_content_parts": len(extra_user_content_parts or []),
-                "dynamic_context_chars": len(self._extra_text(extra_user_content_parts)),
+                "dynamic_content_parts": len(original_extra_parts),
+                "dynamic_context_chars": len(original_dynamic_text),
+                "dynamic_context_forwarded_separately": not extra_parts_already_assembled,
+                "dynamic_context_assembled_in_user_message": extra_parts_already_assembled,
+                "dynamic_context_occurrences_in_payload": self._input_text_occurrences(
+                    input_items, original_dynamic_text
+                ),
+                "dynamic_context_fingerprint": (
+                    hashlib.sha256(original_dynamic_text.encode("utf-8")).hexdigest()[:16]
+                    if original_dynamic_text
+                    else None
+                ),
                 "image_inputs": len(image_urls or []),
                 "audio_inputs": len(audio_urls or []),
-                "tool_schema_bytes": len(
-                    json.dumps(tools or [], ensure_ascii=False, separators=(",", ":")).encode(
-                        "utf-8"
-                    )
-                ),
+                "tool_schema_bytes": len(tool_schema_json.encode("utf-8")),
+                "tool_schema_fingerprint": hashlib.sha256(
+                    tool_schema_json.encode("utf-8")
+                ).hexdigest()[:16],
+                "prompt_cache_key_fingerprint": cache_key[:16],
                 "previous_response_id_used": bool(previous_response_id),
                 "full_history_replayed": not bool(previous_response_id),
+                "tool_continuation": bool(
+                    tool_calls_result
+                    or any(
+                        isinstance(item, dict)
+                        and (item.get("role") == "tool" or item.get("tool_calls"))
+                        for item in input_contexts or []
+                    )
+                ),
             }
             started = time.monotonic()
             final_text = ""
@@ -1356,8 +1506,8 @@ class CodexService:
                     instructions=instructions,
                     input_items=request_items,
                     effort=self._effort,
-                    tools=tools,
-                    prompt_cache_key=hashlib.sha256(session_key.encode("utf-8")).hexdigest(),
+                    tools=stable_tools,
+                    prompt_cache_key=cache_key,
                     previous_response_id=request_previous_id,
                 ):
                     yield event
@@ -1477,11 +1627,13 @@ class CodexService:
         contexts: list[dict[str, Any]] | None = None,
         system_prompt: str | None = None,
         extra_user_content_parts: list[Any] | None = None,
+        extra_parts_already_assembled: bool = False,
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
         tool_calls_result: Any = None,
         model: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        request_route: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         del tool_calls_result, tools
         timeout = max(30.0, min(3600.0, float(self.config.get("turn_timeout", 600))))
@@ -1529,7 +1681,12 @@ class CodexService:
                     [user_text, *current_attachment_markers]
                 ).strip()
             user_text = user_text or "(The user sent an empty message.)"
-            extra_text = self._extra_text(extra_user_content_parts)
+            original_extra_parts = list(extra_user_content_parts or [])
+            extra_parts_for_turn = (
+                [] if extra_parts_already_assembled else original_extra_parts
+            )
+            original_extra_text = self._extra_text(original_extra_parts)
+            extra_text = self._extra_text(extra_parts_for_turn)
             if extra_text:
                 user_text += (
                     "\n\n<astrbot_dynamic_context>\n"
@@ -1538,6 +1695,21 @@ class CodexService:
                 )
             record = await self.sessions.get(session_key)
             is_bootstrapped = bool(record and record.get("bootstrapped"))
+            try:
+                round_index = max(1, int((record or {}).get("turn_count", 0)) + 1)
+            except (TypeError, ValueError):
+                round_index = 1
+            allowed_routes = {
+                "agent",
+                "chat",
+                "decision",
+                "proactive",
+                "vision",
+                "background",
+            }
+            route = (request_route or "chat").strip().lower()
+            if route not in allowed_routes:
+                route = "chat"
             if not is_bootstrapped:
                 user_text = (
                     bootstrap
@@ -1548,11 +1720,20 @@ class CodexService:
             tool_schema = self._tool_schema_json()
             context_diagnostics = {
                 "kind": "estimated_context_composition",
+                "route": route,
+                "round_index": round_index,
                 "harness_mode": self.harness_mode,
                 "harness_chars": len(self._base_instructions() or ""),
                 "system_persona_chars": len(developer_instructions),
                 "conversation_history_chars": len(context_text) if not is_bootstrapped else 0,
-                "dynamic_context_chars": len(extra_text),
+                "dynamic_context_chars": len(original_extra_text),
+                "dynamic_context_forwarded_separately": not extra_parts_already_assembled,
+                "dynamic_context_assembled_in_user_message": extra_parts_already_assembled,
+                "dynamic_context_fingerprint": (
+                    hashlib.sha256(original_extra_text.encode("utf-8")).hexdigest()[:16]
+                    if original_extra_text
+                    else None
+                ),
                 "latest_user_chars": len(user_text),
                 "tool_schema_json_bytes": len(tool_schema.encode("utf-8")),
                 "tool_router": self.tool_router_mode,
@@ -1613,7 +1794,7 @@ class CodexService:
                         audio_urls=audio_urls,
                         extra_user_content_parts=[
                             *current_parts,
-                            *(extra_user_content_parts or []),
+                            *extra_parts_for_turn,
                         ],
                     ),
                     "cwd": str(self.data_dir),

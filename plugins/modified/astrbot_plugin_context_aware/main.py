@@ -1581,7 +1581,7 @@ class Main(star.Star):
         self._show_recent_images_allow_gif = self._cfg_bool(
             "show_recent_images_allow_gif", False
         )
-        self._image_context_window = max(1, self._cfg_int("image_context_window", 20))
+        self._image_context_window = max(1, self._cfg_int("image_context_window", 30))
         self._voice_context_window = max(0, self._cfg_int("voice_context_window", 50))
         self._builtin_ltm_warned: set[str] = set()
         # v3.2.0: 严格模式，主动触发场景下强制不推断 talking_to=bot

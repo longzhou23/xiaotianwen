@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -371,6 +372,103 @@ class ServiceStreamingTests(unittest.IsolatedAsyncioTestCase):
                         }
                     ],
                 )
+            finally:
+                await service.close()
+
+    async def test_transport_does_not_append_assembled_dynamic_context_twice(self):
+        dynamic = "[Iris L2] Long dynamic context used to detect duplicate payloads."
+        tools = [
+            {"type": "function", "name": "z_tool", "parameters": {"type": "object"}},
+            {"type": "function", "name": "a_tool", "parameters": {"type": "object"}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            service = CodexService(
+                Path(directory), {"backend_mode": "transport", "turn_timeout": 30}
+            )
+            fake = FakeTransport()
+            service.transport = fake
+            try:
+                async for _ in service.stream_turn(
+                    session_key="one-session",
+                    prompt=f"hello\n{dynamic}",
+                    extra_user_content_parts=[{"type": "text", "text": dynamic}],
+                    extra_parts_already_assembled=True,
+                    model="gpt-test",
+                    tools=tools,
+                    request_route="agent",
+                ):
+                    pass
+                first = fake.calls[0]
+                encoded = json.dumps(first["input_items"], ensure_ascii=False)
+                self.assertEqual(encoded.count(dynamic), 1)
+                self.assertNotIn("<astrbot_dynamic_context>", encoded)
+                self.assertEqual([tool["name"] for tool in first["tools"]], ["a_tool", "z_tool"])
+                self.assertEqual(len(first["prompt_cache_key"]), 64)
+                diagnostics = service._last_turn["context_diagnostics"]
+                self.assertTrue(diagnostics["dynamic_context_assembled_in_user_message"])
+                self.assertFalse(diagnostics["dynamic_context_forwarded_separately"])
+                self.assertEqual(diagnostics["dynamic_context_occurrences_in_payload"], 1)
+                self.assertEqual(diagnostics["route"], "agent")
+
+                async for _ in service.stream_turn(
+                    session_key="another-session",
+                    prompt=f"hello\n{dynamic}",
+                    extra_user_content_parts=[{"type": "text", "text": dynamic}],
+                    extra_parts_already_assembled=True,
+                    model="gpt-test",
+                    tools=list(reversed(tools)),
+                    request_route="agent",
+                ):
+                    pass
+                self.assertEqual(first["prompt_cache_key"], fake.calls[1]["prompt_cache_key"])
+            finally:
+                await service.close()
+
+    async def test_transport_keeps_direct_extra_parts_and_skips_them_on_continuation(self):
+        dynamic = "[ContextAware] Dynamic source text that must appear exactly once."
+        with tempfile.TemporaryDirectory() as directory:
+            service = CodexService(
+                Path(directory), {"backend_mode": "transport", "turn_timeout": 30}
+            )
+            fake = FakeTransport()
+            service.transport = fake
+            try:
+                async for _ in service.stream_turn(
+                    session_key="direct-extra",
+                    prompt="hello",
+                    extra_user_content_parts=[{"type": "text", "text": dynamic}],
+                    model="gpt-test",
+                ):
+                    pass
+                direct_payload = json.dumps(fake.calls[0]["input_items"], ensure_ascii=False)
+                self.assertEqual(direct_payload.count(dynamic), 1)
+                self.assertIn("<astrbot_dynamic_context>", direct_payload)
+
+                async for _ in service.stream_turn(
+                    session_key="tool-continuation",
+                    prompt=None,
+                    contexts=[
+                        {"role": "user", "content": f"hello\n{dynamic}"},
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "function": {"name": "lookup", "arguments": "{}"},
+                                }
+                            ],
+                        },
+                        {"role": "tool", "tool_call_id": "call-1", "content": "result"},
+                    ],
+                    extra_user_content_parts=[{"type": "text", "text": dynamic}],
+                    extra_parts_already_assembled=True,
+                    model="gpt-test",
+                ):
+                    pass
+                continuation_payload = json.dumps(fake.calls[1]["input_items"], ensure_ascii=False)
+                self.assertEqual(continuation_payload.count(dynamic), 1)
+                self.assertNotIn("<astrbot_dynamic_context>", continuation_payload)
             finally:
                 await service.close()
 

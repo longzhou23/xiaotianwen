@@ -53,7 +53,7 @@ class Main(star.Star):
         self._context = context
         self._config = config
         self._enabled = self._cfg_bool("enable", True)
-        self._pool_size = max(1, self._cfg_int("pool_size", 3))
+        self._pool_size = max(1, self._cfg_int("pool_size", 30))
         self._pool_ttl = max(60, self._cfg_int("pool_ttl", 1800))
         self._description_first = self._cfg_bool("description_first", True)
         self._max_bytes = max(1024 * 1024, self._cfg_int("max_bytes", 50 * 1024 * 1024))
@@ -75,11 +75,15 @@ class Main(star.Star):
         self._download_locks: dict[str, asyncio.Lock] = {}
         self._persist_lock = asyncio.Lock()
         self._reference_pattern = re.compile(
-            r"(这个|这张|那张|上面|刚刚|图片|照片|原图|解析|看看|看下|看一下|星空|图|表情包|贴纸|反应图|meme|emoji)",
+            r"(这个|这张|那张|上面|刚刚|图片|照片|原图|解析|标注|解算|看看|看下|看一下|星空|图|表情包|贴纸|反应图|meme|emoji|astrometry|annotat)",
             re.IGNORECASE,
         )
         self._original_request_pattern = re.compile(
-            r"(重新|再发|原图|看清|细节|放大|像素|识别|测量|定位)",
+            r"(重新|再发|原图|看清|细节|放大|像素|识别|测量|定位|解析|标注|解算|astrometry|annotat)",
+            re.IGNORECASE,
+        )
+        self._all_images_pattern = re.compile(
+            r"(全部|所有|都标|都解析|逐张|每张|这些|这几张|前面几张|最近几张|all)",
             re.IGNORECASE,
         )
         logger.info(
@@ -552,7 +556,11 @@ class Main(star.Star):
             refs = [entry.local_path for entry in reversed(entries) if os.path.isfile(entry.local_path)]
             if not refs:
                 return
-            req.image_urls = refs[: self._pool_size]
+            # 纯文字“标注一下/解析一下”默认指向最近一张图，避免把整个
+            # 30 张缓存窗口都提交给 Astrometry；明确说“全部/这几张”时
+            # 才回放多张。
+            replay_limit = self._pool_size if self._all_images_pattern.search(text) else 1
+            req.image_urls = refs[:replay_limit]
             try:
                 event.set_extra("image_context_pool_replayed_images", len(req.image_urls))
             except Exception:

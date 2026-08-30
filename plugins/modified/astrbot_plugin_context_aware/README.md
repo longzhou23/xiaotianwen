@@ -155,7 +155,7 @@ provider_settings:
 | `only_group_chat` | 仅群聊生效 | `true` |
 | `warn_builtin_ltm` | 检测到内置群聊上下文感知时输出警告 | `true` |
 | `show_recent_images` | 单独列出最近图片消息，避免图片上下文淹没在普通对话流里 | `true` |
-| `image_context_window` | 从最近 N 条消息里提取图片并单独注入 | `20` |
+| `image_context_window` | 从最近 N 条消息里提取图片并单独注入 | `30` |
 
 ### 图像转述配置
 

@@ -4,9 +4,12 @@ from ..agent_provider import (
     _collect_provider_response,
     _conversation_key,
     _ensure_supported_modalities,
+    _extras_are_already_assembled,
     _has_non_text_content,
     _is_title_generation_request,
+    _normalize_request_input_details,
     _normalize_request_inputs,
+    _request_route,
     _stream_frames,
     _stream_provider_responses,
 )
@@ -99,6 +102,67 @@ class AgentProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(prompt)
         self.assertEqual(len(contexts), 1)
         self.assertTrue(_has_non_text_content(contexts[0]["content"]))
+
+    def test_assembled_dynamic_parts_are_detected_only_from_current_user_suffix(self):
+        dynamic = "[Iris L2] This is a stable test dynamic context block."
+        request = _normalize_request_input_details(
+            None,
+            [{"role": "user", "content": f"hello\n{dynamic}"}],
+        )
+
+        self.assertTrue(
+            _extras_are_already_assembled(
+                request, [{"type": "text", "text": dynamic}]
+            )
+        )
+
+    def test_assembled_dynamic_parts_are_found_during_tool_continuation(self):
+        dynamic = "[Iris L3] This remains attached to the original user turn."
+        request = _normalize_request_input_details(
+            None,
+            [
+                {"role": "user", "content": f"hello\n{dynamic}"},
+                {"role": "assistant", "content": None, "tool_calls": []},
+                {"role": "tool", "tool_call_id": "call-1", "content": "result"},
+            ],
+        )
+
+        self.assertTrue(
+            _extras_are_already_assembled(
+                request, [{"type": "text", "text": dynamic}]
+            )
+        )
+
+    def test_short_or_unrelated_user_text_is_not_treated_as_dynamic_context(self):
+        request = _normalize_request_input_details("hello", [])
+
+        self.assertFalse(
+            _extras_are_already_assembled(
+                request, [{"type": "text", "text": "hello"}]
+            )
+        )
+
+    def test_request_route_is_bounded_and_non_sensitive(self):
+        self.assertEqual(
+            _request_route(
+                session_id="group:1",
+                func_tool=None,
+                image_urls=None,
+                audio_urls=None,
+                kwargs={"request_route": "Decision"},
+            ),
+            "decision",
+        )
+        self.assertEqual(
+            _request_route(
+                session_id=None,
+                func_tool=None,
+                image_urls=None,
+                audio_urls=None,
+                kwargs={"request_route": "user:12345"},
+            ),
+            "background",
+        )
 
     def test_sessionless_turn_gets_a_unique_ephemeral_thread(self):
         first = _conversation_key(None)

@@ -20,6 +20,57 @@ class CacheOptimizationTests(unittest.IsolatedAsyncioTestCase):
             self.service.prompt_version("different persona"),
         )
 
+    def test_transport_cache_key_is_stable_and_session_independent(self):
+        tools = [
+            {"type": "function", "name": "z_tool", "parameters": {"type": "object"}},
+            {"type": "function", "name": "a_tool", "parameters": {"type": "object"}},
+        ]
+        first = self.service._transport_cache_key(
+            model="gpt-test",
+            request_route="agent",
+            instructions="stable persona",
+            tools=tools,
+        )
+        second = self.service._transport_cache_key(
+            model="gpt-test",
+            request_route="agent",
+            instructions="stable persona",
+            tools=list(reversed(tools)),
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 64)
+
+    def test_transport_cache_key_changes_for_prefix_identity_only(self):
+        base = dict(
+            model="gpt-test",
+            request_route="agent",
+            instructions="stable persona",
+            tools=[],
+        )
+        self.assertNotEqual(
+            self.service._transport_cache_key(**base),
+            self.service._transport_cache_key(**{**base, "request_route": "decision"}),
+        )
+        self.assertNotEqual(
+            self.service._transport_cache_key(**base),
+            self.service._transport_cache_key(**{**base, "instructions": "new persona"}),
+        )
+        self.assertNotEqual(
+            self.service._transport_cache_key(**base),
+            self.service._transport_cache_key(
+                **{
+                    **base,
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "lookup",
+                            "parameters": {"type": "object"},
+                        }
+                    ],
+                }
+            ),
+        )
+
     async def test_active_thread_is_reused_without_repeated_resume(self):
         calls = []
 

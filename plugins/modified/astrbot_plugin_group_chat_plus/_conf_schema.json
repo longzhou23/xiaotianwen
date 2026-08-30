@@ -408,8 +408,14 @@
     "enable_tools_reminder": {
         "description": "启用工具文本提醒",
         "type": "bool",
-        "hint": "在发给AI的消息末尾追加一段可用工具列表的文字说明，帮助AI知道可以调用哪些工具。仅影响文本提示，不影响AI实际可用的工具集（工具注入由插件自动完成，无需配置）",
+        "hint": "在发给AI的消息末尾追加一段可用工具列表的文字说明，帮助AI知道可以调用哪些工具。仅影响文本提示，不影响AI实际可用的工具集（工具注入由插件自动完成，无需配置）。通常应与“原生工具可用时跳过文本工具提醒”配合开启，避免重复发送完整 schema。",
         "default": false
+    },
+    "skip_tools_reminder_when_native_tools_available": {
+        "description": "原生工具可用时跳过文本工具提醒",
+        "type": "bool",
+        "hint": "当当前请求已经通过 AstrBot func_tool 携带结构化工具 schema 时，不再追加同一套工具名称、参数和描述的文本清单。保留实际工具能力和通用工具调用规则；仅关闭重复 Token 输入。建议保持开启。",
+        "default": true
     },
     "tools_reminder_persona_filter": {
         "description": "工具按人格过滤",
