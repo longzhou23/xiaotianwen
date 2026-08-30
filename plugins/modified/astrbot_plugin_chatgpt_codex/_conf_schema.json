@@ -36,6 +36,30 @@
     "description": "使用服务端 model/list 声明的推理强度；auto 表示交由服务端选择。",
     "default": "auto"
   },
+  "route_reasoning_effort": {
+    "type": "object",
+    "description": "按 agent/chat/decision/proactive/vision/background 路由覆盖推理强度；未填写时使用全局 reasoning_effort。",
+    "default": {}
+  },
+  "route_max_output_tokens": {
+    "type": "object",
+    "description": "按路由限制最大输出 token（256-32768）；未填写表示不额外限制。",
+    "default": {}
+  },
+  "max_tool_result_chars": {
+    "type": "int",
+    "description": "工具结果注入上下文的最大字符数；保留首尾并插入截断标记，0 表示不截断。",
+    "minimum": 0,
+    "maximum": 50000,
+    "default": 12000
+  },
+  "max_transport_images": {
+    "type": "int",
+    "description": "单次 transport 请求最多发送的最新图片数；0 表示不限制。",
+    "minimum": 0,
+    "maximum": 8,
+    "default": 1
+  },
   "harness_mode": {
     "type": "string",
     "options": ["lightweight", "codex"],

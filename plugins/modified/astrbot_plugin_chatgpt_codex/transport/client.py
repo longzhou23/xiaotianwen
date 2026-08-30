@@ -191,6 +191,7 @@ class CodexTransportClient:
         tools: list[dict[str, Any]] | None = None,
         prompt_cache_key: str | None = None,
         previous_response_id: str | None = None,
+        max_output_tokens: int | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         snapshot = await self.auth.snapshot()
         payload = response_request(
@@ -201,6 +202,7 @@ class CodexTransportClient:
             tools=tools,
             prompt_cache_key=prompt_cache_key,
             previous_response_id=previous_response_id,
+            max_output_tokens=max_output_tokens,
         )
         request = Request(
             self.base_url + "/responses",

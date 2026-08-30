@@ -349,17 +349,40 @@ def _function_call_items(tool_calls: Any) -> list[dict[str, Any]]:
     return result
 
 
-def _tool_output_value(value: Any) -> str | list[dict[str, Any]]:
+def trim_tool_output(value: str, max_chars: int | None) -> str:
+    """Bound textual tool output while retaining both the beginning and end.
+
+    Tool results frequently contain a useful status/header at the beginning and
+    an artifact id or URL at the end.  Keeping both sides makes the bound
+    deterministic without dropping the references needed by a follow-up turn.
+    ``max_chars <= 0`` disables the bound for compatibility.
+    """
+
+    if not isinstance(value, str) or not max_chars or max_chars <= 0 or len(value) <= max_chars:
+        return value
+    marker_template = "\n...[tool output truncated; original_chars={}]...\n"
+    marker = marker_template.format(len(value))
+    available = max_chars - len(marker)
+    if available <= 0:
+        return marker[:max_chars]
+    head = max(1, int(available * 0.75))
+    tail = max(0, available - head)
+    if tail:
+        return value[:head] + marker + value[-tail:]
+    return value[:head] + marker
+
+
+def _tool_output_value(value: Any, max_chars: int | None = None) -> str | list[dict[str, Any]]:
     """Keep structured public media in tool output when Codex supports it."""
 
     if isinstance(value, str):
-        return value
+        return trim_tool_output(value, max_chars)
     parts, _ = _content_parts(value, role="user")
     if parts:
         return parts
     if value is None:
         return ""
-    return json.dumps(value, ensure_ascii=False, default=str)
+    return trim_tool_output(json.dumps(value, ensure_ascii=False, default=str), max_chars)
 
 
 def _tool_result_messages(value: Any) -> list[dict[str, Any]]:
@@ -392,6 +415,7 @@ def build_input_items(
     audio_urls: list[str] | None = None,
     tool_calls_result: Any = None,
     include_latest: bool = True,
+    max_tool_result_chars: int | None = None,
 ) -> list[dict[str, Any]]:
     """Convert AstrBot messages to the Responses input-item shape.
 
@@ -408,7 +432,7 @@ def build_input_items(
         if role == "tool":
             call_id = message.get("tool_call_id")
             if isinstance(call_id, str) and call_id:
-                output = _tool_output_value(message.get("content", ""))
+                output = _tool_output_value(message.get("content", ""), max_tool_result_chars)
                 result.append({"type": "function_call_output", "call_id": call_id, "output": output})
             continue
         # System/developer messages are promoted to the top-level
@@ -463,7 +487,7 @@ def build_input_items(
         if role == "tool":
             call_id = message.get("tool_call_id")
             if isinstance(call_id, str) and call_id:
-                output = _tool_output_value(message.get("content", ""))
+                output = _tool_output_value(message.get("content", ""), max_tool_result_chars)
                 result.append({"type": "function_call_output", "call_id": call_id, "output": output})
         elif role == "assistant":
             result.extend(_function_call_items(message.get("tool_calls")))
@@ -521,6 +545,7 @@ def response_request(
     tools: list[dict[str, Any]] | None = None,
     prompt_cache_key: str | None = None,
     previous_response_id: str | None = None,
+    max_output_tokens: int | None = None,
 ) -> dict[str, Any]:
     """Build a direct Responses request without Codex thread metadata."""
 
@@ -538,6 +563,8 @@ def response_request(
     }
     if effort and effort != "auto":
         payload["reasoning"] = {"effort": effort, "summary": "auto"}
+    if isinstance(max_output_tokens, int) and max_output_tokens > 0:
+        payload["max_output_tokens"] = max_output_tokens
     if tools:
         payload["tools"] = tools
     if prompt_cache_key:

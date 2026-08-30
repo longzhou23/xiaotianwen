@@ -424,6 +424,86 @@ class ServiceStreamingTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await service.close()
 
+    async def test_transport_uses_route_specific_effort_and_output_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = CodexService(
+                Path(directory),
+                {
+                    "backend_mode": "transport",
+                    "turn_timeout": 30,
+                    "reasoning_effort": "medium",
+                    "route_reasoning_effort": {"decision": "low"},
+                    "route_max_output_tokens": {"decision": 512},
+                },
+            )
+            fake = FakeTransport()
+            service.transport = fake
+            try:
+                async for _ in service.stream_turn(
+                    session_key="decision-route",
+                    prompt="classify",
+                    model="gpt-test",
+                    request_route="decision",
+                ):
+                    pass
+                self.assertEqual(fake.calls[0]["effort"], "low")
+                self.assertEqual(fake.calls[0]["max_output_tokens"], 512)
+                self.assertEqual(service._last_turn["reasoning_effort"], "low")
+            finally:
+                await service.close()
+
+    async def test_transport_bounds_direct_images_to_latest_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = CodexService(
+                Path(directory),
+                {"backend_mode": "transport", "turn_timeout": 30, "max_transport_images": 1},
+            )
+            fake = FakeTransport()
+            service.transport = fake
+            try:
+                async for _ in service.stream_turn(
+                    session_key="image-limit",
+                    prompt="inspect",
+                    image_urls=[
+                        "https://example.invalid/old.png",
+                        "https://example.invalid/new.png",
+                    ],
+                    model="gpt-test",
+                ):
+                    pass
+                content = fake.calls[0]["input_items"][-1]["content"]
+                self.assertNotIn("https://example.invalid/old.png", json.dumps(content))
+                self.assertIn("https://example.invalid/new.png", json.dumps(content))
+                self.assertEqual(service._last_turn["context_diagnostics"]["image_inputs_dropped"], 1)
+            finally:
+                await service.close()
+
+    async def test_transport_keeps_multiple_images_for_explicit_set_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            service = CodexService(
+                Path(directory),
+                {"backend_mode": "transport", "turn_timeout": 30, "max_transport_images": 1},
+            )
+            fake = FakeTransport()
+            service.transport = fake
+            try:
+                async for _ in service.stream_turn(
+                    session_key="image-set",
+                    prompt="请分析这些图片",
+                    image_urls=[
+                        "https://example.invalid/one.png",
+                        "https://example.invalid/two.png",
+                    ],
+                    model="gpt-test",
+                ):
+                    pass
+                content = json.dumps(fake.calls[0]["input_items"][-1]["content"])
+                self.assertIn("https://example.invalid/one.png", content)
+                self.assertIn("https://example.invalid/two.png", content)
+                self.assertEqual(service._last_turn["context_diagnostics"]["image_inputs_dropped"], 0)
+            finally:
+                await service.close()
+
     async def test_transport_keeps_direct_extra_parts_and_skips_them_on_continuation(self):
         dynamic = "[ContextAware] Dynamic source text that must appear exactly once."
         with tempfile.TemporaryDirectory() as directory:

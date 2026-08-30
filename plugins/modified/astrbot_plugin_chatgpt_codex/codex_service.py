@@ -41,6 +41,11 @@ from .transport.types import (
 from .usage.models import UsageSnapshot, parse_usage_snapshot_event
 from .usage.service import UsageService
 
+_ALLOWED_ROUTES = frozenset({"agent", "chat", "decision", "proactive", "vision", "background"})
+_ALLOWED_EFFORTS = frozenset(
+    {"auto", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+)
+
 
 @contextlib.asynccontextmanager
 async def _async_timeout(seconds: float):
@@ -231,6 +236,46 @@ class CodexService:
 
     def _thread_config(self) -> dict[str, Any] | None:
         return lightweight_config() if self.harness_mode == "lightweight" else None
+
+    def _effort_for_route(self, route: str) -> str:
+        """Select a validated per-route reasoning effort with a safe fallback."""
+
+        base = self._effort if self._effort in _ALLOWED_EFFORTS else "auto"
+        mapping = self.config.get("route_reasoning_effort", {})
+        if not isinstance(mapping, dict):
+            return base
+        candidate = mapping.get(route)
+        return candidate if isinstance(candidate, str) and candidate in _ALLOWED_EFFORTS else base
+
+    def _max_output_tokens_for_route(self, route: str) -> int | None:
+        mapping = self.config.get("route_max_output_tokens", {})
+        if not isinstance(mapping, dict):
+            return None
+        candidate = mapping.get(route)
+        if isinstance(candidate, bool) or not isinstance(candidate, int):
+            return None
+        return candidate if 256 <= candidate <= 32768 else None
+
+    def _max_tool_result_chars(self) -> int:
+        value = self.config.get("max_tool_result_chars", 12000)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return 12000
+        return max(0, min(50000, value))
+
+    def _bounded_transport_images(
+        self, image_urls: list[str] | None, prompt: str | None = None
+    ) -> list[str]:
+        """Keep newest direct images unless the user explicitly requests a set."""
+
+        values = [item for item in image_urls or [] if isinstance(item, str) and item]
+        distinct = list(dict.fromkeys(values))
+        limit = self.config.get("max_transport_images", 1)
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            return distinct
+        explicit_set_words = ("这些", "全部", "所有", "前几张", "多张", "逐张", "每张")
+        if any(word in (prompt or "") for word in explicit_set_words):
+            return distinct
+        return distinct[-min(limit, 8) :]
 
     async def _server_request(
         self, request_id: int, method: str, _params: dict[str, Any]
@@ -1398,9 +1443,17 @@ class CodexService:
                 [] if extra_parts_already_assembled else original_extra_parts
             )
             original_dynamic_text = self._extra_text(original_extra_parts)
+            allowed_routes = _ALLOWED_ROUTES
+            route = (request_route or "chat").strip().lower()
+            if route not in allowed_routes:
+                route = "chat"
+            route_effort = self._effort_for_route(route)
+            route_max_output_tokens = self._max_output_tokens_for_route(route)
+            bounded_image_urls = self._bounded_transport_images(image_urls, prompt)
+            max_tool_result_chars = self._max_tool_result_chars()
             include_latest = bool(
                 prompt
-                or image_urls
+                or bounded_image_urls
                 or audio_urls
                 or forwarded_extra_parts
                 or not input_contexts
@@ -1409,10 +1462,11 @@ class CodexService:
                 input_contexts,
                 prompt,
                 forwarded_extra_parts,
-                image_urls=image_urls,
+                image_urls=bounded_image_urls,
                 audio_urls=audio_urls,
                 tool_calls_result=tool_calls_result,
                 include_latest=include_latest,
+                max_tool_result_chars=max_tool_result_chars,
             )
             input_type_counts: dict[str, int] = {}
             for item in input_items:
@@ -1423,17 +1477,6 @@ class CodexService:
                 role = item.get("role") if isinstance(item, dict) else None
                 role_name = str(role or "unknown")
                 context_role_counts[role_name] = context_role_counts.get(role_name, 0) + 1
-            allowed_routes = {
-                "agent",
-                "chat",
-                "decision",
-                "proactive",
-                "vision",
-                "background",
-            }
-            route = (request_route or "chat").strip().lower()
-            if route not in allowed_routes:
-                route = "chat"
             stable_tools = self._stable_tools(tools)
             tool_schema_json = self._canonical_json(stable_tools)
             cache_key = self._transport_cache_key(
@@ -1472,8 +1515,16 @@ class CodexService:
                     if original_dynamic_text
                     else None
                 ),
-                "image_inputs": len(image_urls or []),
+                "image_inputs": len(bounded_image_urls),
+                "image_inputs_received": len(image_urls or []),
+                "image_inputs_dropped": max(0, len(image_urls or []) - len(bounded_image_urls)),
                 "audio_inputs": len(audio_urls or []),
+                "tool_result_max_chars": max_tool_result_chars,
+                "tool_result_truncations": json.dumps(input_items, ensure_ascii=False).count(
+                    "[tool output truncated;"
+                ),
+                "route_reasoning_effort": route_effort,
+                "route_max_output_tokens": route_max_output_tokens,
                 "tool_schema_bytes": len(tool_schema_json.encode("utf-8")),
                 "tool_schema_fingerprint": hashlib.sha256(
                     tool_schema_json.encode("utf-8")
@@ -1505,10 +1556,11 @@ class CodexService:
                     model=selected_model,
                     instructions=instructions,
                     input_items=request_items,
-                    effort=self._effort,
+                    effort=route_effort,
                     tools=stable_tools,
                     prompt_cache_key=cache_key,
                     previous_response_id=request_previous_id,
+                    max_output_tokens=route_max_output_tokens,
                 ):
                     yield event
 
@@ -1568,7 +1620,7 @@ class CodexService:
                         thread_id=None,
                         turn_id=response_id,
                         model=selected_model,
-                        reasoning_effort=self._effort,
+                        reasoning_effort=route_effort,
                         usage={
                             "input_tokens": usage.get("input_tokens"),
                             "cached_input_tokens": usage.get("cached_input_tokens"),
@@ -1584,7 +1636,7 @@ class CodexService:
             self._last_turn = {
                 "backend": "transport",
                 "model": selected_model,
-                "reasoning_effort": self._effort,
+                "reasoning_effort": route_effort,
                 "latency_ms": round((time.monotonic() - started) * 1000, 1),
                 "usage": usage,
                 "usage_diagnostic": usage_diagnostic,

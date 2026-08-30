@@ -51,6 +51,39 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(payload["store"], False)
         self.assertEqual(payload["stream"], True)
 
+    def test_response_request_can_bound_output_tokens(self):
+        payload = response_request(
+            model="gpt-test",
+            instructions="be concise",
+            input_items=build_input_items([], "hello"),
+            max_output_tokens=512,
+        )
+        self.assertEqual(payload["max_output_tokens"], 512)
+
+    def test_tool_output_is_trimmed_but_keeps_head_and_tail(self):
+        value = "HEADER " + ("x" * 500) + " ARTIFACT_URL"
+        items = build_input_items(
+            [{"role": "tool", "tool_call_id": "call-1", "content": value}],
+            None,
+            include_latest=False,
+            max_tool_result_chars=120,
+        )
+        output = items[0]["output"]
+        self.assertLessEqual(len(output), 120)
+        self.assertTrue(output.startswith("HEADER"))
+        self.assertTrue(output.endswith("ARTIFACT_URL"))
+        self.assertIn("[tool output truncated;", output)
+
+    def test_tool_output_bound_can_be_disabled(self):
+        value = "x" * 200
+        items = build_input_items(
+            [{"role": "tool", "tool_call_id": "call-1", "content": value}],
+            None,
+            include_latest=False,
+            max_tool_result_chars=0,
+        )
+        self.assertEqual(items[0]["output"], value)
+
     def test_input_mapping_keeps_history_and_latest_message(self):
         items = build_input_items(
             [

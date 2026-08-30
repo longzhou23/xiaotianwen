@@ -37,6 +37,10 @@ CONFIG_DEFAULTS: dict[str, Any] = {
     "login_mode": "browser",
     "default_model": "auto",
     "reasoning_effort": "auto",
+    "route_reasoning_effort": {},
+    "route_max_output_tokens": {},
+    "max_tool_result_chars": 12000,
+    "max_transport_images": 1,
     "harness_mode": "lightweight",
     "tool_router": "minimal",
     "streaming": True,
@@ -60,6 +64,8 @@ CONFIG_RANGES: dict[str, tuple[int, int]] = {
     "thread_idle_ttl": (0, 31536000),
     "thread_max_age": (0, 31536000),
     "usage_retention_days": (0, 3650),
+    "max_tool_result_chars": (0, 50000),
+    "max_transport_images": (0, 8),
 }
 
 
@@ -341,6 +347,8 @@ class ChatgptCodexPlugin(Star):
             "tool_router",
             "usage_timezone",
         }
+        route_names = {"agent", "chat", "decision", "proactive", "vision", "background"}
+        effort_names = {"auto", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
         bool_fields = {
             "streaming",
             "show_tool_status",
@@ -368,6 +376,26 @@ class ChatgptCodexPlugin(Star):
                 if value not in {"none", "minimal", "all"}:
                     raise ValueError("tool_router 只能是 none、minimal 或 all。")
                 values[key] = value
+            elif key == "route_reasoning_effort":
+                if not isinstance(value, dict):
+                    raise ValueError("route_reasoning_effort 必须是对象。")
+                normalized: dict[str, str] = {}
+                for route, effort in value.items():
+                    if route not in route_names or not isinstance(effort, str) or effort not in effort_names:
+                        raise ValueError("route_reasoning_effort 仅支持已知路由和合法推理强度。")
+                    normalized[route] = effort
+                values[key] = normalized
+            elif key == "route_max_output_tokens":
+                if not isinstance(value, dict):
+                    raise ValueError("route_max_output_tokens 必须是对象。")
+                normalized_tokens: dict[str, int] = {}
+                for route, tokens in value.items():
+                    if route not in route_names or isinstance(tokens, bool) or not isinstance(tokens, int):
+                        raise ValueError("route_max_output_tokens 仅支持已知路由和整数。")
+                    if not 256 <= tokens <= 32768:
+                        raise ValueError("route_max_output_tokens 必须在 256 到 32768 之间。")
+                    normalized_tokens[route] = tokens
+                values[key] = normalized_tokens
             elif key == "transport_proxy":
                 if not isinstance(value, str) or len(value.strip()) > 512:
                     raise ValueError("Transport 代理必须是 512 个字符以内的文本。")

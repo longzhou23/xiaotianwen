@@ -251,6 +251,7 @@ SnowLuma / QQ 入口
 
 | 文档 | 内容 |
 |---|---|
+| [统一 TODO](Todo.md) | 编排层重构、稳定性、安全、SnowLuma、迁移、Agent Loop、缓存与性能的唯一主计划 |
 | [架构总览](docs/ARCHITECTURE.md) | 组件边界、完整消息管线、数据策略、安全约束与验收 |
 | [部署说明](docs/DEPLOYMENT.md) | Docker 拓扑、端口、管理入口、日志与当前部署约定 |
 | [部署脚本说明](deploy/README.md) | bootstrap、更新、回退、备份、恢复与自动同步 |

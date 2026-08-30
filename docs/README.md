@@ -19,7 +19,7 @@
 - [部署说明](DEPLOYMENT.md)：当前 Docker/服务部署细节。
 - [迁移说明](MIGRATION.md)：公共代码、私有实例与新主机恢复流程。
 - [版本策略](VERSION_POLICY.md)：AstrBot、SnowLuma 和插件的版本管理。
-- [Agent Loop 优化 TODO](AGENT_LOOP_OPTIMIZATION_TODO.md)：当前 4.27.4 工具循环、缓存链路、性能基线、分阶段实现项与验收指标。
+- [统一 TODO](../Todo.md)：编排层重构、稳定性、安全、SnowLuma、迁移、Agent Loop、缓存与性能的唯一主计划。
 
 ## 日常命令
 
