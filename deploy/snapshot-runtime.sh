@@ -55,6 +55,14 @@ if ! tar "${tar_args[@]}"; then
     --exclude='*/thumb_cache' \
     --exclude='snowluma/qq-data' \
     -C /runtime "${snapshot_items[@]}"
+  # The fallback tar runs as root, so return ownership of only the newly
+  # created archive to the invoking deploy user before the host chmod below.
+  snapshot_uid=$(id -u)
+  snapshot_gid=$(id -g)
+  docker run --rm --user 0:0 --entrypoint /bin/sh \
+    --mount "type=bind,src=$BACKUP_ROOT/pre-update,dst=/backup" \
+    "$snapshot_image" \
+    -c "chown ${snapshot_uid}:${snapshot_gid} /backup/$archive_name"
 fi
 
 chmod 600 "$archive"
