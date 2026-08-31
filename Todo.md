@@ -41,7 +41,7 @@
 本轮新增 P1 integration bridge 和 P2 迁移/安全/运维/性能策略内核；真实 AstrBot
 Hook、Provider、QQ、SnowLuma 长跑及 active 切换仍按后续验收门禁处理。
 
-当前公共仓库还有上述 P1 的未提交修改。开始新 Orchestrator 前，必须先完成 P0 基线提交、测试、push 和 tag。
+P0 基线已完成提交、测试、push 和 tag；本轮 P1/P2 本地内核已提交，后续只剩真实实例接线和长时验收门禁。
 
 ### 0.2 已完成的基础设施
 
