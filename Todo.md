@@ -665,6 +665,7 @@ Iris 检索结果
 
 - [x] 提交并 push 当前 Provider/Group Chat Plus 修改（public `810d284`）。
 - [x] 部署前备份 Azure 实例配置和插件运行数据（2026-08-31 `xiaotianwen-instance-20260831-002816.tar.gz`）。
+- [x] 将本轮公共测试框架/P1/P2 dormant 代码同步到 Azure `c1b6bd1`；停服前创建私有归档和运行时回退快照，使用 `RESTORE_INSTANCE=0` 保留现有实例，`deploy/verify.sh` 通过且两容器 restart count 为 0。
 - [ ] 在测试会话验证动态块、图片和 tools 各只出现一次。
 - [ ] 抓取脱敏 payload 结构，验证 instructions/tools/cache key 稳定。
 - [ ] 验证 direct provider 调用在 contexts 未包含 extras 时仍追加一次动态内容。

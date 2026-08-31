@@ -124,3 +124,24 @@ UI 的自动 HTTP 测试覆盖 CSRF、回环绑定、合成输入、分阶段 ou
 
 当前没有以此复核结果冒充真实用户会话、Hook 顺序、Provider、QQ 收发、Affection
 写入或 24/72 小时门禁证据。
+
+## 当前公共代码同步与服务恢复（2026-08-31 15:21 Asia/Shanghai）
+
+本轮将公共仓库 `c1b6bd1` 同步到 Azure；使用的是停服后备份、运行时快照、
+`RESTORE_INSTANCE=0`、现有镜像重新启动的代码级流程，没有执行镜像拉取，也没有
+恢复旧 private 快照。记录如下：
+
+| 项目 | 结果 |
+|---|---|
+| Public commit | `c1b6bd1` |
+| Private commit | `143239f`；工作区 clean |
+| 私有归档 | `backups/xiaotianwen-instance-20260831-151801.tar.gz`，权限 `600` |
+| 运行时回退快照 | `backups/pre-update/runtime-20260831-151812.tar.gz`，权限 `600` |
+| 实例恢复策略 | `RESTORE_INSTANCE=0`；现有 runtime 保留，未覆盖数据库/QQ 登录数据 |
+| AstrBot image | `soulter/astrbot@sha256:5d23f264ba9cb9b03a2bc1ef87f1ac87c03932aa99459b497afacb6a7c38aa8e` |
+| SnowLuma image | `motricseven7/snowluma@sha256:2f3596c8bc0ca6f7c773802d7f7b000f79a270403ef22db468b9861ce12c8a05` |
+| 服务验证 | AstrBot/SnowLuma running，restart count `0`；`deploy/verify.sh` 通过 |
+
+Orchestrator 仍未加入 private `plugins.lock.yaml`，所以这次同步不会启用它接管生产
+Hook、Provider 或 QQ 出站链路。部署成功只证明代码同步和服务恢复，不证明真实用户消息、
+人格质量、Affection 写入、Provider 工具循环或 24/72 小时门禁。
