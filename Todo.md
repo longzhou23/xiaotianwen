@@ -622,6 +622,8 @@ Iris 检索结果
 - 多图分析不会只保留最后一张；
 - 媒体清理后，记忆中仍保留 ID 和摘要，不保留失效 base64。
 
+本轮离线验收：`test_media_registry.py` 覆盖以上 ID/order、图文引用、摘要复用、标注关联、清理后 metadata-only 和 VLM key 行为；真实 ImageContextPool 实例接入和文件恢复仍待 P1 集成测试。
+
 ### P1-5 逐步接管主回复创建
 
 - [x] 增加 `orchestrator_mode=shadow|canary|active|disabled` 的纯策略解析。
@@ -639,6 +641,8 @@ Iris 检索结果
 - 取消中的旧回复不会在新回复之后迟到发送；
 - 主动聊天不会触发旧路径和新路径各一份回复。
 
+本轮离线验收：ownership/delivery 测试覆盖模式解析、canary 白名单、同 event 单 owner、request 级取消、session fallback 和幂等 delivery；真实 AstrBot hook priority、100 Turn 实例回放和主路径切换仍未完成。
+
 ### P1-6 部署并验证当前 Agent Loop P0/P1 改动
 
 已经本地实现、待提交和线上验证：
@@ -653,8 +657,8 @@ Iris 检索结果
 
 部署任务：
 
-- [ ] 提交并 push 当前 Provider/Group Chat Plus 修改。
-- [ ] 部署前备份 Azure 实例配置和插件运行数据。
+- [x] 提交并 push 当前 Provider/Group Chat Plus 修改（public `810d284`）。
+- [x] 部署前备份 Azure 实例配置和插件运行数据（2026-08-31 `xiaotianwen-instance-20260831-002816.tar.gz`）。
 - [ ] 在测试会话验证动态块、图片和 tools 各只出现一次。
 - [ ] 抓取脱敏 payload 结构，验证 instructions/tools/cache key 稳定。
 - [ ] 验证 direct provider 调用在 contexts 未包含 extras 时仍追加一次动态内容。

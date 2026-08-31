@@ -68,3 +68,24 @@ UI 的自动 HTTP 测试覆盖 CSRF、回环绑定、合成输入、分阶段 ou
 
 因此 `refactor` 与 `full-offline` 的正确结论是 `NOT VERIFIED`：已运行的
 离线层通过，但不能据此宣称整套生产链路已经验收。
+
+## Azure 代码同步验证（2026-08-31）
+
+本次同步先执行了部署脚本的私有实例备份，随后仅拉取 public `main` 并执行
+`RESTORE_INSTANCE=0 bash deploy/install.sh`；没有拉取新镜像，也没有恢复 private
+快照。备份文件为远端 `backups/xiaotianwen-instance-20260831-002816.tar.gz`。
+
+| 项目 | 结果 |
+|---|---|
+| public commit | `810d28459e70db530443176a760fa2a0b09e64e8` |
+| public/private 工作区 | clean |
+| Codex Storage / Recall Cancel 运行时文件 | 与 public 文件 SHA-256 一致 |
+| AstrBot Dashboard / OneBot / SnowLuma WebUI / noVNC | 全部健康或监听 |
+| 容器状态 | `astrbot running restarts=0`；`snowluma running restarts=0` |
+| 部署脚本 403 检查 | 通过 |
+| Orchestrator 私有锁/运行时目录 | absent-disabled；未启用 |
+
+这证明的是“已启用插件代码同步且服务恢复”，不是用户会话、真实 Provider、真实
+多模态请求或 Orchestrator 24 小时 Shadow Gate 的通过证明。部署后日志只做了不输出正文
+的宽泛错误模式计数，未将其作为业务结论；如需进一步判断必须在测试会话中做脱敏
+结构观测，不直接打印原始日志。
