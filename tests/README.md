@@ -34,8 +34,10 @@ python -m tests.harness.cli compare --baseline approved --candidate current
 python -m tests.harness.cli ui --host 127.0.0.1 --port 0 --open
 ```
 
-`integration` 是 P1 的预留入口。即使 Docker 已安装，P0 也会明确报告
-`NOT VERIFIED`，而不会连接现有容器或生产端口。
+`integration` 现在运行本地、无网络的 P1 Fake OneBot/Fake AstrBot/Fake
+Provider 合同场景，并将观测写入本次 sandbox；命令不会连接现有容器或生产
+端口。它仍会把真实 AstrBot 临时实例、插件发现/Hook 顺序、真实 Provider 和
+QQ 业务链路标为 `NOT_VERIFIED`。
 
 ## 干净 Python 环境
 
@@ -89,7 +91,10 @@ python -m tests.harness.cli approve-baseline --case p0-group-text-single --reaso
   外部网络、秘密泄漏等回归；
 - `ui/`：仅回环监听的 Local Test Console，显示当前 synthetic run 的 input、
   request、log、output 与 compare；
-- `integration/`、`performance/`、`test-support/`：P1/P2 预留，不作为 P0 完成证据。
+- `integration/`：P1 隔离层说明；可执行 fake 合同入口位于
+  `tests/harness/p1_integration.py`，不等同于真实 AstrBot 集成。
+- `performance/`：P2 长期性能门禁说明；统计和 Canary 模板位于 Orchestrator
+  的 `p2/performance.py`，不把单次耗时当作功能通过。
 
 插件矩阵中的 `NOT_RUN` 是明确缺口，不应通过安装生产依赖、读取实例数据或改动
 上游插件来强行变绿。P1 会为它们建立独立、可销毁的依赖环境和 AstrBot 契约层。

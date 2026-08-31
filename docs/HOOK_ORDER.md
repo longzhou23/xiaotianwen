@@ -27,6 +27,11 @@
 
 静态命中不代表插件当前已启用，也不代表调用就是主回复。运行时仍必须按 `route`、`owner`、`request_id`、`call_id` 和最终 delivery 观察；P1/P2 不能将本文件当作真实加载顺序或完整调用图的证据。
 
+P2 新增的声明式字段/所有权清单位于
+`plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/p2/hook_contract.py`。
+它把当前 legacy Hook 与隔离目标 assembler 分开记录，并将 Group Chat Plus
+兼容 Hook 默认标为关闭；这份清单仍不能替代隔离 AstrBot 的运行时顺序验证。
+
 ## 当前关键顺序风险
 
 | 生命周期 | 关键声明 | 已知 priority | P0 关注点 |

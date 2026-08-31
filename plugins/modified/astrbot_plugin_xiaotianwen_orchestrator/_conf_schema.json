@@ -9,6 +9,11 @@
     "type": "bool",
     "default": false
   },
+  "observation_capture_text": {
+    "description": "仅在明确的本地隔离观察中显示经脱敏的输入/输出文本；默认只记录长度和指纹",
+    "type": "bool",
+    "default": false
+  },
   "quiet_window_seconds": {
     "description": "影子回放使用的消息安静窗口（秒）",
     "type": "float",

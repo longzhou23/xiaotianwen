@@ -1,6 +1,6 @@
 name: astrbot_plugin_xiaotianwen_orchestrator
 display_name: 小天文编排器（影子模式）
-desc: 统一 Turn 和 Context 协议的离线影子实现；默认不接管任何回复、LLM 或工具调用。
+desc: 统一 Turn、Context、观测和安全策略的离线影子实现；默认不接管任何回复、LLM 或工具调用。
 author: xiaotianwen-maintainers
 version: 0.1.0
 astrbot_version: ">=4.27.2,<5"

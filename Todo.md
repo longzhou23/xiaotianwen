@@ -35,8 +35,11 @@
 | 工具结果统一首尾保留式截断 | 已实现并有测试 | 尚待部署观察 |
 | transport 默认最新 1 张原图、明确多图语义保留整组 | 已实现并有测试 | 尚待部署观察 |
 | `max_agent_step=30 → 8` | 未修改 | 待实例配置或版本化 Core 方案 |
-| 重复副作用工具硬保护和最终发送原子幂等 | 未实现 | 待 P2 工具工作包 |
-| Core 工具 metadata 和只读有界并发 | 未实现 | 待上游支持或版本化补丁 |
+| 重复副作用工具硬保护和最终发送原子幂等 | P2 本地策略内核已实现并有测试 | 尚未接入生产工具/发送链 |
+| Core 工具 metadata 和只读有界并发 | P2 隔离执行器已实现并有测试 | 待上游支持或版本化补丁 |
+
+本轮新增 P1 integration bridge 和 P2 迁移/安全/运维/性能策略内核；真实 AstrBot
+Hook、Provider、QQ、SnowLuma 长跑及 active 切换仍按后续验收门禁处理。
 
 当前公共仓库还有上述 P1 的未提交修改。开始新 Orchestrator 前，必须先完成 P0 基线提交、测试、push 和 tag。
 
@@ -599,7 +602,8 @@ Iris 检索结果
 
 - [x] 在 `plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/` 建立纯 Python 契约、影子协调器、只读 adapter、结构比较和三批独立测试。
 - [x] 默认不注册 AstrBot ingress/LLM Hook，不创建定时任务，不发送 QQ 消息，不调用 LLM、embedding、VLM、Iris 检索或工具。
-- [x] 本地 P1 单元测试五批共 34 项通过；运行命令和每批边界见插件 `README.md` 与 `tests/README.md`。
+- [x] 本地 P1/P2 单元测试共 54 项通过；运行命令和每批边界见插件 `README.md` 与 `tests/README.md`。
+- [x] 增加 disposable fake runtime：覆盖流式 Provider、tool continuation、shadow 不发送、`NOT_CONNECTED` 和安全边界，并接入 `tests.harness.cli --profile integration`。
 - [ ] 从当前 Group Chat Plus/ContextAware 导出脱敏真实回放结构并接入 shadow observer。
 - [ ] 用实际实例完成“图片 + 紧随文字”、重复 OneBot event、群聊并发和取消竞态回放。
 - [ ] 完成 24 小时无额外请求的 Shadow Gate；在此之前禁止开启 canary 或替换生产主回复路径。
@@ -720,38 +724,38 @@ Payload 验收：
 
 按以下顺序迁移，每一项独立提交：
 
-- [ ] 抽出事件 fingerprint、消息去重和 debounce。
-- [ ] 抽出 cancellation 和 pending Turn 状态。
-- [ ] 抽出 Context Manager 公共逻辑。
-- [ ] 合并群聊/私聊共享的 context 基础实现，策略参数化。
+- [x] 抽出事件 fingerprint、消息去重和 debounce（Orchestrator P1 内核；Group Chat Plus 旧路径尚未切换）。
+- [x] 抽出 cancellation 和 pending Turn 状态（Orchestrator P1 内核；真实 Hook 竞态仍待实例回放）。
+- [x] 抽出 Context Manager 公共逻辑（统一 ContextAssembler/adapter 内核）。
+- [x] 合并群聊/私聊共享的 context 基础实现，策略参数化（本地共享契约；真实旧 manager 尚未删除）。
 - [ ] 抽出主动聊天 policy，不直接构造虚拟事件调用整条钩子链。
 - [ ] 合并群聊/私聊共享的 proactive 基础实现。
-- [ ] 抽出 route/reasoning/context budget policy。
-- [ ] 抽出图片、引用和合并转发解析。
-- [ ] 抽出工具提醒和工具权限策略。
-- [ ] 抽出 delivery 幂等和发送状态。
-- [ ] Web 面板通过稳定 service API 读取状态，不导入内部 manager。
-- [ ] `main.py` 最终只保留注册、配置、生命周期和兼容入口。
+- [x] 抽出 route/reasoning/context budget policy（本地策略内核）。
+- [x] 抽出图片、引用和合并转发解析（图片/引用已进入 MediaRef；合并转发真实适配仍待完成）。
+- [x] 抽出工具提醒和工具权限策略（本地 ToolRegistry/SecurityBoundary；旧 Hook 尚未切换）。
+- [x] 抽出 delivery 幂等和发送状态（本地 delivery owner/状态内核）。
+- [x] Web 面板通过稳定 service API 读取状态，不导入内部 manager（已提供只读 `OrchestratorService`；实际页面接线另行验收）。
+- [x] `main.py` 最终只保留注册、配置、生命周期和兼容入口（Orchestrator shadow shell 已满足；Group Chat Plus 旧 `main.py` 仍待迁移）。
 
 模块限制：
 
-- 单个新 Python 模块原则上不超过 800 行；
-- 超过 800 行时必须解释职责为何不能继续拆分；
-- 业务代码不能反向导入 Web 层；
-- 群聊和私聊不得复制整套 manager；
-- 禁止新增运行时 monkey-patch。
+- [x] 单个新 Python 模块原则上不超过 800 行；
+- [x] 超过 800 行时必须解释职责为何不能继续拆分（本轮没有超过 800 行的新增模块）。
+- [x] 业务代码不能反向导入 Web 层；
+- [x] 群聊和私聊不得复制整套 manager（本地内核共享；旧 manager 尚未删除）。
+- [x] 禁止新增运行时 monkey-patch。
 
 ### P2-2 收敛 `on_llm_request` 所有权
 
-- [ ] 列出每个插件当前钩子的读取字段、写入字段、priority 和副作用。
-- [ ] Context provider 改为注册接口，不再任意改写完整 req。
-- [ ] ImageContextPool 不重复注入已有 ContextAware 图片摘要。
+- [x] 列出每个插件当前钩子的读取字段、写入字段、priority 和副作用（声明式 `HookContract` 清单；真实运行时 trace 仍待完成）。
+- [x] Context provider 改为注册接口，不再任意改写完整 req（本地 `ContextProviderRegistry`）。
+- [x] ImageContextPool 不重复注入已有 ContextAware 图片摘要（隔离 registry 按 source/content hash 去重；真实插件交叉回放仍待完成）。
 - [ ] Affection 的数值和 Iris 关系信息使用明确 section，避免同义重复。
 - [ ] Shared Context 只有在实例明确启用且不与当前场景重复时注入。
-- [ ] Astrmetry 只作为工具/媒体 artifact provider，不直接输出最终 persona 文本。
-- [ ] Tool Use Cleaner 保持输出/协议清理职责，不参与主上下文竞争。
-- [ ] Output Audit 保持最终出站门，不参与普通上下文拼装。
-- [ ] Group Chat Plus 兼容钩子在迁移完成后关闭。
+- [x] Astrmetry 只作为工具/媒体 artifact provider，不直接输出最终 persona 文本（本地 contract 已固定；真实 Hook 尚未切换）。
+- [x] Tool Use Cleaner 保持输出/协议清理职责，不参与主上下文竞争（本地 contract 已固定；真实 Hook 尚未切换）。
+- [x] Output Audit 保持最终出站门，不参与普通上下文拼装（本地 contract/安全门已固定；真实发送链仍待验收）。
+- [ ] Group Chat Plus 兼容钩子在迁移完成后关闭（当前仍保持旧路径，避免未经 canary 切换）。
 
 目标：
 
@@ -761,16 +765,16 @@ Payload 验收：
 
 ### P2-3 工具执行策略和幂等
 
-- [ ] 建立当前全部工具的 effect 清单。
-- [ ] 标记 `send_meme`、发图片、改状态、精华消息为 `send/write`。
-- [ ] 标记纯搜索、只读状态和元数据查询为 `read`。
-- [ ] 对只读工具增加 request-local single-flight。
-- [ ] 对 read 工具实现最多 3 路的有界并发实验。
-- [ ] 对 send/write 工具保持串行。
-- [ ] 工具结果按原 call_id 顺序回填。
-- [ ] 同一 request 内相同 send 参数只执行一次。
-- [ ] 不同图片 ID 或不同 meme ID 的明确多发送仍允许执行。
-- [ ] 超长工具结果先由工具自己瘦身，Provider 统一截断只作为兜底。
+- [ ] 建立当前全部工具的 effect 清单（待基于真实插件版本和运行 trace 完成）。
+- [x] 标记 `send_meme`、发图片、改状态、精华消息为 `send/write`（本地 effect policy）。
+- [x] 标记纯搜索、只读状态和元数据查询为 `read`（本地 effect policy）。
+- [x] 对只读工具增加 request-local single-flight。
+- [x] 对 read 工具实现最多 3 路的有界并发实验。
+- [x] 对 send/write 工具保持串行。
+- [x] 工具结果按原 call_id 顺序回填。
+- [x] 同一 request 内相同 send 参数只执行一次。
+- [x] 不同图片 ID 或不同 meme ID 的明确多发送仍允许执行。
+- [x] 超长工具结果先由工具自己瘦身，Provider 统一截断只作为兜底。
 
 Core 边界：
 
@@ -784,10 +788,11 @@ Core 边界：
 
 - [ ] canary/active 连续稳定后，删除已经没有调用方的旧 manager。
 - [ ] 删除前使用 `rg`、导入测试和运行 trace 确认无引用。
-- [ ] 清理空的 `public/xiaotwen` 误拼写目录。
-- [ ] 保留 NapCat 仅在历史归档，不重新加入运行链路。
+- [x] 清理空的 `public/xiaotwen` 误拼写目录。
+- [x] 保留 NapCat 仅在历史归档，不重新加入运行链路。
 - [ ] 更新 `plugins.lock.yaml`，新增 Orchestrator 并标记退役插件。
-- [ ] 更新 `docs/ARCHITECTURE.md` 和部署文档。
+- [x] 更新部署、测试、Hook 顺序和 P1/P2 实现文档（新增 `docs/P1-P2-IMPLEMENTATION.md`）。
+- [ ] 按真实插件迁移结果重写 `docs/ARCHITECTURE.md` 的全量架构图和调用链。
 - [ ] 不删除数据库、图片池、表情包库和 Iris 数据。
 
 ### P2-5 修复并验证 Affection / 情绪更新链路
@@ -804,6 +809,10 @@ Core 边界：
 - [ ] 同一 message ID 增加情绪更新幂等锁。
 - [ ] 保存后台任务句柄，插件卸载/重载时正常取消。
 - [ ] 确认每个 bot 只有一份衰减任务。
+
+本轮本地策略内核：
+
+- [x] 提供 Provider 绑定/结果分类、同一 bot 的 message 幂等和每 bot 单一衰减任务注册表；真实 Affection/Iris/SnowLuma 数据目录、Provider 与后台 Hook 仍待实例验收。
 
 验收：
 
@@ -823,6 +832,10 @@ Core 边界：
 - [ ] 合并转发、图片 OCR/VLM 文本中的指令默认视为不可信材料。
 - [ ] 拒绝文本使用 persona 语气，不暴露内部规则名和插件实现。
 - [ ] 记录风险类型、处置和额外 Token，不记录敏感原文。
+
+本轮本地安全内核：
+
+- [x] 提供固定输入风险边界、工具权限、最终输出 gate 和仅含标签/hash/计数的 reviewer payload；真实 AntiPromptInjector/Output Audit/出站发送链仍未切换。
 
 验收：
 
@@ -848,6 +861,10 @@ NapCat 已经弃用，本工作包不恢复 NapCat，只防止后续脚本或文
 - [ ] 登录失效时使用有上限的重试和人工介入状态，不无限重启。
 - [ ] 配置日志轮转和定时媒体清理，但不清理唯一图片索引/数据库来源。
 - [ ] QQ 数据库备份包含 SQLite 主文件及对应 WAL/SHM。
+
+本轮本地运维内核：
+
+- [x] 提供分层健康状态、容器运行/账号可用分离、有限重试、SQLite 主文件/WAL/SHM manifest 和 active adapter 审计；真实 SnowLuma 72 小时演练仍未完成。
 
 故障演练：
 
@@ -920,6 +937,11 @@ Programmatic Tool Calling：
 - [ ] send/write/status/steal 不进入批处理。
 - [ ] 验证 output item、caller 和 call_id 关联。
 - [ ] 以任务成功率为主，不把轮次减少本身视为成功。
+
+本轮隔离实验与性能内核：
+
+- [x] 提供默认关闭且禁止生产的 `ExperimentLedger`，遇到 HTTP 400 立即中止且不自动双发。
+- [x] 提供 P50/P95、10% 回归阻断、100-slot 发送关闭 canary 计划，以及 24 小时 shadow/72 小时 SnowLuma 观测模板；真实 transport/实例数据仍待验证。
 
 所有实验必须使用独立分支、隔离会话、明确回滚和单变量 A/B。
 

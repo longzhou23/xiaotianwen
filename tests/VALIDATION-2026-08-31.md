@@ -11,8 +11,8 @@ SnowLuma、真实 Provider 或公网服务。为验证插件兼容性，另在�
 | 命令 | 结果 | 说明 |
 |---|---|---|
 | `py -m py_compile <tests/harness、tests/selftests、tests/ui、Orchestrator 测试的全部 Python 文件>` | 通过 | 语法编译完成 |
-| `py -m pytest -q tests/selftests` | `26 passed` | 框架正向测试、12 个故障注入、自身报告/路径/脱敏/UI HTTP 测试 |
-| `Python 3.12 -m pytest -q tests plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests` | `77 passed` | P0 harness、UI、43 条回放支撑测试、P1 Orchestrator |
+| `py -m pytest -q tests/selftests` | `28 passed` | 框架正向测试、12 个故障注入、自身报告/路径/脱敏/UI HTTP、P1 fake runner 和部署静态门禁 |
+| `Python 3.12 -m pytest -q tests plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests` | `99 passed` | P0 harness、UI、P1 fake integration、P1/P2 Orchestrator |
 | `Python 3.12 -m pytest -q plugins/modified/astrbot_plugin_chatgpt_codex/tests` | 通过 | Codex Provider 本地测试集合全部通过；首次暴露并修复 Windows SQLite 临时文件句柄问题 |
 | `Python 3.12 -m pytest -q plugins/modified/astrbot_plugin_astrmetry/tests` | `3 passed` | P1 依赖环境验证 |
 | `Python 3.12 -m pytest -q plugins/upstream/astrbot_plugin_iris_memory/tests` | `1496 passed, 1 skipped, 4 failed` | 上游 Windows/配置边界问题，保留为未通过，不篡改上游行为 |
@@ -21,6 +21,19 @@ SnowLuma、真实 Provider 或公网服务。为验证插件兼容性，另在�
 | `Python 3.12 -m tests.harness.cli run --profile refactor` | `NOT VERIFIED` | 功能回放 `23/23`；已启用矩阵项通过，3 个上游插件仍按 P0 策略明确未运行 |
 | `Python 3.12 -m tests.harness.cli run --profile full-offline` | `NOT VERIFIED` | 功能+注入回放 `43/43`；插件矩阵 `7 PASSED / 3 NOT_RUN / 0 FAILED` |
 | `py -m tests.harness.cli compare --case p0-group-text-single --baseline approved --run-id p0-compare-no-approved` | `NOT VERIFIED` | 没有 approved baseline；命令不会自动创建或覆盖 Golden |
+| `Python 3.12 -m tests.harness.cli run --profile integration --run-id p1-p2-final-20260831` | `NOT VERIFIED` | 4/4 fake checks 通过，46 条观测；真实 AstrBot/Provider/QQ/长跑门禁保持未验证 |
+| `Python 3.12 -m tests.harness.cli run --profile full-offline --run-id p1-p2-offline-regression-20260831` | `NOT VERIFIED` | 回放 43/43；插件矩阵 7 PASSED / 3 NOT_RUN / 0 FAILED |
+
+## P1/P2 本轮实现增量
+
+本轮完成的是公共仓库内、默认 dormant 的本地策略和观测内核，不改变当前生产主回复链：
+
+- `integration/` 提供不持有平台对象的 AstrBot adapter、结构化观测、脱敏字段摘要和 disposable fake runtime；fake runtime 不连接 socket、Docker、QQ、Provider、数据库或模型。
+- `p2/` 提供 Provider registry、声明式 Hook contract、工具 effect/幂等执行、安全边界、Affection 绑定与后台任务注册表、分层健康/备份 manifest、隔离实验 ledger、性能摘要和稳定只读 service facade。
+- `main.py` 只准备配置、观测存储和显式 adapter，不注册真实 AstrBot ingress、LLM Hook、Provider、工具、定时任务或 QQ delivery；`observation_capture_text` 默认关闭。
+- 99 项全量 Python 测试、编译检查和 `git diff --check` 通过。`integration` 的 46 条观测明确包含 `COMPLETE`、`PARTIAL`、`NOT_CONNECTED`，没有把未连接状态记作 0。
+
+仍未完成且不能由上述结果替代的门禁：真实 AstrBot 临时实例/插件发现/Hook priority/Plugin Page、真实 Provider/QQ/SnowLuma、Group Chat Plus 旧路径只读接线、100 Turn canary、24 小时 Shadow Gate、72 小时 SnowLuma 长跑、空白 VM 恢复和任何生产 active 切换。P2 的旧 manager 删除、`plugins.lock.yaml` 退役标记及实际 `on_llm_request` 所有权迁移继续保持未勾选。
 
 当前 `full-offline` profile 的插件矩阵状态为：
 

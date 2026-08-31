@@ -63,9 +63,9 @@ PROFILES: dict[str, ProfileDefinition] = {
     ),
     "integration": ProfileDefinition(
         name="integration",
-        description="Reserved P1 isolated integration profile; never connects to production ports.",
+        description="P1 disposable fake integration profile; real AstrBot remains a separate NOT_VERIFIED gate.",
         catalogs=(),
-        requires_docker=True,
+        requires_docker=False,
     ),
     "ui": ProfileDefinition(
         name="ui",

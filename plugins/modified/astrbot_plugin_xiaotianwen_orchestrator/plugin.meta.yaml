@@ -9,3 +9,5 @@ local_changes:
   - Define platform-independent Turn, Context, Media and Tool contracts.
   - Provide a no-dispatch Turn Coordinator for replay and shadow testing.
   - Provide read-only Context adapters and a structural payload comparator.
+  - Provide an explicit P1 observation adapter and disposable Fake OneBot/Provider runtime.
+  - Provide P2 provider, tool-effect, security, emotion-task and layered-health policy kernels.

@@ -14,6 +14,7 @@ from .compare import BaselineStore, canonical_observation, compare_observations
 from .config import PROFILES, FrameworkConfigError, create_run_id, find_repository_root, profile_definition
 from .matrix import load_matrix, run_matrix
 from .network_guard import NetworkGuard, NetworkViolation
+from .p1_integration import run_p1_fake_suite
 from .replay import ReplayEngine, build_interactive_case, load_case_catalog, load_injection_catalog
 from .report import write_run_report
 from .sandbox import RunSandbox, SandboxViolation
@@ -115,6 +116,37 @@ def _execute_run(args: argparse.Namespace, *, force_baseline: str | None = None)
     if profile.name == "ui":
         return _execute_ui(args)
     sandbox = _unique_sandbox(repository_root, getattr(args, "run_id", None), profile.name)
+    if profile.name == "integration":
+        try:
+            with NetworkGuard(allow_loopback=True):
+                p1_report = run_p1_fake_suite(repository_root)
+        except NetworkViolation as exc:
+            report = write_run_report(
+                sandbox=sandbox,
+                repository_root=repository_root,
+                profile=profile,
+                replay_results=(),
+                not_verified=("P1 fake integration was blocked by the network guard",),
+                security_violations=(str(exc),),
+            )
+            print(f"{report.summary['release_gate']}: artifacts/test-runs/{sandbox.run_id}")
+            return EXIT_SECURITY
+        sandbox.write_json("observations/p1-integration.json", {"observations": list(p1_report.observations)})
+        sandbox.write_json("logs/p1-integration.json", {"events": [item for item in p1_report.observations if item.get("kind") == "log.emitted"]})
+        sandbox.write_json("p1-summary.json", p1_report.to_dict())
+        report = write_run_report(
+            sandbox=sandbox,
+            repository_root=repository_root,
+            profile=profile,
+            replay_results=(),
+            plugin_results=p1_report.checks,
+            not_verified=(
+                "real AstrBot disposable instance, plugin discovery/Hook order and Plugin Page remain NOT_VERIFIED",
+                "real Provider/QQ/SnowLuma integration and long-run gates remain NOT_VERIFIED",
+            ),
+        )
+        print(f"{report.summary['release_gate']}: artifacts/test-runs/{sandbox.run_id}")
+        return EXIT_FAILURE if any(item.status == "FAILED" for item in p1_report.checks) else EXIT_PASS
     if profile.requires_docker:
         docker = shutil.which("docker")
         reason = "P1 integration harness is not implemented in P0."

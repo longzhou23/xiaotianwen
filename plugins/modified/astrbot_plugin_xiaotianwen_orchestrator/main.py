@@ -1,4 +1,4 @@
-"""AstrBot-facing shell for the P1 shadow library.
+"""AstrBot-facing shell for the P1/P2 shadow library.
 
 It intentionally registers no ingress or LLM hook in P1.  Installation alone
 therefore cannot alter a production response, and later canary work has one
@@ -14,16 +14,30 @@ from astrbot.api import star
 
 from .context import ContextAssembler, ContextAssemblyPolicy, SharedContextAdapter
 from .ingress import ShadowTurnCoordinator
+from .integration import AstrBotObservationAdapter, ObservationAdapter, RuntimeObservationStore
 
 
 class Main(star.Star):
-    """Dormant plugin shell; P1 only exposes in-memory shadow helpers."""
+    """Dormant plugin shell; P1/P2 expose only in-memory local helpers."""
 
     def __init__(self, context: star.Context, config: Any | None = None) -> None:
         super().__init__(context)
         self._config = config
         self.shadow_enabled = self._cfg_bool("shadow_enabled", False)
         self.shared_context_enabled = self._cfg_bool("shared_context_enabled", False)
+        self.observation_capture_text = self._cfg_bool("observation_capture_text", False)
+        # This is an explicit adapter target for a future isolated test
+        # instance.  It is intentionally not registered with AstrBot here:
+        # merely installing the plugin must not observe or rewrite production
+        # requests.
+        self.observation_store = RuntimeObservationStore("orchestrator-instance")
+        self.observation_adapter = ObservationAdapter(
+            self.observation_store,
+            source="ORCHESTRATOR_ADAPTER",
+        )
+        self.astrbot_observation_adapter = AstrBotObservationAdapter(
+            self.observation_adapter
+        )
         self.coordinator = ShadowTurnCoordinator(
             enabled=self.shadow_enabled,
             quiet_window_seconds=max(0.1, self._cfg_float("quiet_window_seconds", 3.0)),
@@ -64,11 +78,13 @@ class Main(star.Star):
 
     async def initialize(self) -> None:
         logger.info(
-            "[XiaotianwenOrchestrator] P1 shadow library loaded; "
+            "[XiaotianwenOrchestrator] P1/P2 local shadow library loaded; "
             f"shadow_enabled={self.shadow_enabled}, "
             f"shared_context_enabled={self.shared_context_enabled}; "
+            "explicit observation adapter is prepared but not connected; "
             "no event hook, LLM request, tool call, timer or delivery owner is active"
         )
 
     async def terminate(self) -> None:
         self.coordinator.disable()
+        self.observation_store.clear()
