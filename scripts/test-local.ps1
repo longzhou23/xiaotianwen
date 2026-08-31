@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('quick', 'refactor', 'full-offline', 'integration', 'ui')]
+    [ValidateSet('quick', 'refactor', 'full-offline', 'integration', 'audit', 'ui')]
     [string]$Profile = 'quick',
     [string]$Case,
     [string]$Tag,

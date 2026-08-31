@@ -58,6 +58,51 @@ def test_explicit_astrbot_adapter_records_shape_without_prompt_body() -> None:
     assert "input_tokens" in rendered
 
 
+def test_astrbot_427_entities_are_adapted_without_using_prompt_bodies() -> None:
+    """Exercise the fields used by the installed AstrBot 4.27.x entities."""
+
+    from astrbot.core.agent.tool import FunctionTool
+    from astrbot.core.provider.entities import LLMResponse, ProviderRequest, TokenUsage
+    from astrbot.core.provider.entities import ToolSet
+
+    store = RuntimeObservationStore("p1-astrbot-entities")
+    adapter = AstrBotObservationAdapter(ObservationAdapter(store, source="ASTRBOT_ADAPTER"))
+    function_tool = FunctionTool(
+        name="synthetic_lookup",
+        description="Synthetic test tool",
+        parameters={"type": "object", "properties": {}},
+    )
+    request = ProviderRequest(
+        prompt="private prompt api_key=do-not-record",
+        contexts=[{"role": "user", "content": "private context"}],
+        func_tool=ToolSet(tools=[function_tool]),
+        model="astrbot-4.27-test",
+    )
+    response = LLMResponse(
+        "assistant",
+        tools_call_args=[{"query": "private"}],
+        tools_call_name=["synthetic_lookup"],
+        tools_call_ids=["call-actual-0001"],
+        usage=TokenUsage(input_other=10, input_cached=2, output=4),
+    )
+
+    adapter.provider_request(request, request_id="request-actual", role="main_reply", stream=True)
+    adapter.provider_response(response, request_id="request-actual", role="main_reply")
+
+    records = store.to_dicts()
+    rendered = json.dumps(records, ensure_ascii=False)
+    started = next(item for item in records if item["kind"] == "request.started")
+    completed = next(item for item in records if item["kind"] == "request.completed")
+    assert started["payload"]["model"] == "astrbot-4.27-test"
+    assert started["payload"]["tool_count"] == 1
+    assert completed["payload"]["finish_reason"] == "tool_calls"
+    assert completed["payload"]["tool_call_count"] == 1
+    assert completed["payload"]["usage"] == {"input_other": 10, "input_cached": 2, "output": 4}
+    assert "private prompt" not in rendered
+    assert "private context" not in rendered
+    assert "private" not in rendered
+
+
 def test_fake_runtime_exercises_stream_usage_and_delivery_with_correlations() -> None:
     runtime = FakeAstrBotRuntime(run_id="p1-runtime-test", provider_outcome="stream")
     result = runtime.submit_event(_event(), now=100.0)
@@ -114,3 +159,17 @@ def test_ingress_contract_keeps_reply_and_media_structure() -> None:
     assert turn.reply_to == "m-000"
     assert [item.media_id for item in turn.media] == ["img-001"]
     assert turn.media[0].order == 0
+
+
+def test_observation_log_is_structural_by_default_and_store_prunes_by_time() -> None:
+    store = RuntimeObservationStore("p1-retention", retention_seconds=5)
+    adapter = ObservationAdapter(store, source="FAKE_ASTRBOT")
+    adapter.log(level="INFO", message="Authorization: should-not-be-stored", timestamp=0.0)
+    adapter.log(level="INFO", message="safe synthetic state", timestamp=3.0)
+    adapter.log(level="INFO", message="new synthetic state", timestamp=6.0)
+
+    rendered = json.dumps(store.to_dicts(), ensure_ascii=False)
+    assert "should-not-be-stored" not in rendered
+    assert all("display" not in item["payload"] for item in store.to_dicts())
+    assert len(store.snapshot()) == 2
+    assert store.dropped_count == 1

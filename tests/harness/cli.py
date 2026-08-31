@@ -12,7 +12,8 @@ from typing import Any, Iterable
 
 from .compare import BaselineStore, canonical_observation, compare_observations
 from .config import PROFILES, FrameworkConfigError, create_run_id, find_repository_root, profile_definition
-from .matrix import load_matrix, run_matrix
+from .hook_audit import build_manifest, compare_manifest, load_baseline, render_markdown
+from .matrix import PluginTestResult, load_matrix, run_matrix
 from .network_guard import NetworkGuard, NetworkViolation
 from .p1_integration import run_p1_fake_suite
 from .replay import ReplayEngine, build_interactive_case, load_case_catalog, load_injection_catalog
@@ -147,6 +148,62 @@ def _execute_run(args: argparse.Namespace, *, force_baseline: str | None = None)
         )
         print(f"{report.summary['release_gate']}: artifacts/test-runs/{sandbox.run_id}")
         return EXIT_FAILURE if any(item.status == "FAILED" for item in p1_report.checks) else EXIT_PASS
+    if profile.name == "audit":
+        try:
+            with NetworkGuard(allow_loopback=True):
+                manifest = build_manifest(repository_root)
+                drift = compare_manifest(manifest, load_baseline(repository_root))
+        except NetworkViolation as exc:
+            report = write_run_report(
+                sandbox=sandbox,
+                repository_root=repository_root,
+                profile=profile,
+                replay_results=(),
+                not_verified=("static Hook audit was blocked by the network guard",),
+                security_violations=(str(exc),),
+            )
+            print(f"{report.summary['release_gate']}: artifacts/test-runs/{sandbox.run_id}")
+            return EXIT_SECURITY
+        except (OSError, ValueError) as exc:
+            report = write_run_report(
+                sandbox=sandbox,
+                repository_root=repository_root,
+                profile=profile,
+                replay_results=(),
+                plugin_results=(
+                    PluginTestResult(
+                        identifier="p0-hook-audit",
+                        status="FAILED",
+                        duration_ms=0,
+                        reason=str(exc),
+                        returncode=1,
+                        command=("static-ast-audit",),
+                        output="configuration error",
+                    ),
+                ),
+            )
+            print(f"{report.summary['release_gate']}: artifacts/test-runs/{sandbox.run_id}")
+            return EXIT_FAILURE
+        audit_result = PluginTestResult(
+            identifier="p0-hook-audit",
+            status="PASSED" if not drift else "FAILED",
+            duration_ms=0,
+            reason="; ".join(drift) if drift else None,
+            returncode=0 if not drift else 1,
+            command=("static-ast-audit",),
+            output=f"hooks={manifest['hook_count']} llm_calls={manifest['llm_call_count']}",
+        )
+        sandbox.write_json("hook-manifest.json", manifest)
+        sandbox.write_text("hook-audit.md", render_markdown(repository_root))
+        report = write_run_report(
+            sandbox=sandbox,
+            repository_root=repository_root,
+            profile=profile,
+            replay_results=(),
+            plugin_results=(audit_result,),
+        )
+        print(f"{report.summary['release_gate']}: artifacts/test-runs/{sandbox.run_id}")
+        return EXIT_FAILURE if drift else EXIT_PASS
     if profile.requires_docker:
         docker = shutil.which("docker")
         reason = "P1 integration harness is not implemented in P0."
@@ -286,7 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     run = subcommands.add_parser("run", help="run an offline profile, one case, or a tag selection")
-    run.add_argument("--profile", default="quick", choices=("quick", "refactor", "full-offline", "integration", "ui"))
+    run.add_argument("--profile", default="quick", choices=("quick", "refactor", "full-offline", "integration", "audit", "ui"))
     run.add_argument("--case")
     run.add_argument("--tag")
     run.add_argument("--candidate", default="current", choices=("current",))

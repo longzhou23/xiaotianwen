@@ -12,11 +12,14 @@ Orchestrator 的平台无关内核。目标是让 Luna/Terra 后续接入时有�
 timestamp、run/turn/request/call/delivery 关联字段、source、status、capture
 mode 和脱敏 payload。默认只记录长度、hash、数量和类别；只有调用方显式
 设置 `capture_text=True` 时，才在本地观察记录中保留经过凭据脱敏并限长的
-显示文本。
+显示文本。`RuntimeObservationStore` 和公共测试框架 `TraceStore` 都支持按
+事件时间的可配置 retention，过期事件自动丢弃，不把未连接状态折算成零值。
 
 `integration/astrbot_adapter.py` 是显式适配器：调用方把真实或等价的
 ProviderRequest/LLMResponse 传入指定方法，适配器读取 contexts、stream、
-usage、tool call 数量和终止类别，不改写对象，也不替换 AstrBot 的全局函数。
+model、ToolSet、AstrBot 4.27.x 的 `tools_call_*` 和 TokenUsage 字段，不改写
+对象，也不替换 AstrBot 的全局函数。当前测试使用已安装的 AstrBot 4.27.4
+实体类型，但没有发起真实网络 Provider 请求。
 
 `integration/fake_runtime.py` 提供本地四类合同场景：
 
@@ -48,6 +51,11 @@ Provider/QQ 和长时观测写入 `NOT_VERIFIED`，因此正常退出不代表�
 | `p2/operations.py` | 容器/WebUI/登录/OneBot/AstrBot/最小收发分层健康状态、有限重试、SQLite companion 和脱敏 manifest | 不执行远端维护动作 |
 | `p2/performance.py` | P50/P95、10% 回归判断、100 Turn 不发送清单、24/72 小时模板 | 长时和人工门禁仍未开始 |
 | `p2/experiments.py` | feature flag、独立 branch/session、400 即终止且不重试 | 不把实验参数发到生产 |
+| `p2/proactive.py` | 群聊/私聊共享主动聊天 policy，以及超过阈值后按 request_id 关联的 show/update/retract 状态意图 | 只返回纯策略结果，不创建虚拟事件、后台任务或出站消息 |
+
+`tests/harness/cli --profile audit` 对 `plugins/` 做静态 AST 清单，记录 Hook、priority
+和 direct LLM 调用；checked-in baseline 发生漂移时运行失败，并将完整清单写入本次
+run 的 `hook-manifest.json`。它是升级漂移安全网，不是运行时加载顺序证明。
 
 Group Chat Plus 的 70 万字节 legacy `main.py` 没有被整体重写；现有
 `ingress/`、`context/`、`output/` 和新增 `p2/` 是可逐步迁移的公共内核。
@@ -62,9 +70,11 @@ python -m pytest -q tests
 python -m pytest -q plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests
 python -m compileall -q plugins/modified/astrbot_plugin_xiaotianwen_orchestrator
 git diff --check
+python -m tests.harness.cli run --profile audit --run-id p0-audit-final-20260831
 ```
 
-通过表示公共代码、fake 合同、策略和脱敏边界通过。以下仍必须单独执行并
+当前全量结果为 `105 passed`；静态审计为 `PASS`，扫描到 56 个 Hook 和 25 个
+direct LLM 调用。通过表示公共代码、fake 合同、策略和脱敏边界通过。以下仍必须单独执行并
 保留证据：真实 AstrBot 4.27.x 临时实例、Hook/Plugin Page、真实 Provider
 契约、100 Turn Canary、24 小时 shadow、SnowLuma 72 小时、故障恢复和生产
 主回复切换。

@@ -26,11 +26,18 @@ class Main(star.Star):
         self.shadow_enabled = self._cfg_bool("shadow_enabled", False)
         self.shared_context_enabled = self._cfg_bool("shared_context_enabled", False)
         self.observation_capture_text = self._cfg_bool("observation_capture_text", False)
+        self.observation_retention_seconds = max(
+            60.0,
+            self._cfg_float("observation_retention_seconds", 86_400.0),
+        )
         # This is an explicit adapter target for a future isolated test
         # instance.  It is intentionally not registered with AstrBot here:
         # merely installing the plugin must not observe or rewrite production
         # requests.
-        self.observation_store = RuntimeObservationStore("orchestrator-instance")
+        self.observation_store = RuntimeObservationStore(
+            "orchestrator-instance",
+            retention_seconds=self.observation_retention_seconds,
+        )
         self.observation_adapter = ObservationAdapter(
             self.observation_store,
             source="ORCHESTRATOR_ADAPTER",

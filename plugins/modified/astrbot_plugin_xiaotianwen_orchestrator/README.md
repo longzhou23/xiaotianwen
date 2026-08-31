@@ -8,8 +8,8 @@
 - `media/`：媒体 ID、消息顺序、标注 artifact、缺失文件提示和 VLM `content_hash + provider + prompt_version` 缓存键；
 - `decision/`、`request_plan.py`：显式 route 策略、请求级 context memo、工具续轮复用和脱敏的 P95/质量指标；
 - `output/`、`ingress/ownership.py`：一次 delivery 幂等、取消/审计门禁、shadow/canary/active/disabled 所有权策略。
-- `integration/`：不持有平台对象的 AstrBot 适配桥、结构化观测存储和 disposable fake runtime；
-- `p2/`：Provider registry、Hook contract、工具 effect/幂等、安全边界、运维健康、隔离实验和性能策略内核。
+- `integration/`：不持有平台对象的 AstrBot 适配桥、结构化观测存储和 disposable fake runtime；观测支持按时间自动清理，正文默认不落盘。
+- `p2/`：Provider registry、Hook contract、工具 effect/幂等、安全边界、主动聊天/长请求状态策略、运维健康、隔离实验和性能策略内核。
 
 ## P1 的安全边界
 
@@ -41,8 +41,11 @@ py -m pytest -q plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests/t
 # E. P1-5/P1-7/P1-8：所有权、delivery 幂等、memory single-flight、route 与 request plan
 py -m pytest -q plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests/test_ownership_delivery.py plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests/test_memory_route_plan.py
 
-# 全部 P1/P2 单元测试（当前 54 项）
+# 全部 P1/P2 单元测试（当前 58 项）
 py -m pytest -q plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests
+
+# P0 Hook/direct-LLM 静态清单漂移审计（不导入或启动插件）
+py -m tests.harness.cli run --profile audit --run-id p0-audit-local
 
 # P1 disposable fake integration；不会连接 Docker、QQ、Provider 或生产端口
 $env:XTW_TEST_NETWORK_DENY='1'
@@ -51,7 +54,7 @@ py -m tests.harness.cli run --profile integration --run-id p1-local-integration
 
 Linux/Azure 上把首个 `py` 改为 `python3` 或容器内已验证的 Python 命令。上线前的真实回放、24 小时 shadow gate 和 canary gate 仍属于 Todo 的后续步骤，不能用这组单元测试替代。
 
-本目录的 P1/P2 实现是可部署但默认 dormant 的纯 Python library。fake runtime 只验证本地桥接、流式/工具续轮和观测语义，不连接真实 AstrBot hook、ProviderRequest、Iris 查询、VLM/embedding、工具或 QQ delivery；`main.py` 仍不注册 Hook。因此测试通过表示本地契约和策略通过，不表示线上路径已经切换。
+本目录的 P1/P2 实现是可部署但默认 dormant 的纯 Python library。fake runtime 只验证本地桥接、流式/工具续轮和观测语义；适配器另有 AstrBot 4.27.4 实体字段回归，但不连接真实 AstrBot hook、Provider 网络、Iris 查询、VLM/embedding、工具或 QQ delivery；`main.py` 仍不注册 Hook。因此测试通过表示本地契约和策略通过，不表示线上路径已经切换。
 
 ## 后续接入顺序
 

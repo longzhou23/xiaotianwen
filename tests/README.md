@@ -1,4 +1,4 @@
-# 小天文本地重构测试框架（P0）
+# 小天文本地重构测试框架（P0/P1/P2）
 
 这是一个仓库级、离线、可删除重建的回归框架。它不登录 QQ，不读取
 Private Instance，不连接生产 AstrBot / SnowLuma / Provider，也不尝试访问
@@ -12,6 +12,7 @@ Private Instance，不连接生产 AstrBot / SnowLuma / Provider，也不尝试�
 pwsh ./scripts/test-local.ps1 -Profile quick
 pwsh ./scripts/test-local.ps1 -Profile refactor
 pwsh ./scripts/test-local.ps1 -Profile full-offline
+pwsh ./scripts/test-local.ps1 -Profile audit
 pwsh ./scripts/test-local.ps1 -Profile ui -NoOpen
 ```
 
@@ -19,6 +20,7 @@ pwsh ./scripts/test-local.ps1 -Profile ui -NoOpen
 bash ./scripts/test-local.sh quick
 bash ./scripts/test-local.sh refactor
 bash ./scripts/test-local.sh full-offline
+bash ./scripts/test-local.sh audit
 bash ./scripts/test-local.sh ui --no-open
 ```
 
@@ -30,6 +32,7 @@ python -m tests.harness.cli list
 python -m tests.harness.cli run --profile quick
 python -m tests.harness.cli run --case p0-group-text-debounce
 python -m tests.harness.cli run --tag tool
+python -m tests.harness.cli run --profile audit
 python -m tests.harness.cli compare --baseline approved --candidate current
 python -m tests.harness.cli ui --host 127.0.0.1 --port 0 --open
 ```

@@ -67,6 +67,12 @@ PROFILES: dict[str, ProfileDefinition] = {
         catalogs=(),
         requires_docker=False,
     ),
+    "audit": ProfileDefinition(
+        name="audit",
+        description="Static AST Hook/direct-LLM inventory with checked-in drift detection.",
+        catalogs=(),
+        requires_docker=False,
+    ),
     "ui": ProfileDefinition(
         name="ui",
         description="Starts the loopback-only Local Test Console.",

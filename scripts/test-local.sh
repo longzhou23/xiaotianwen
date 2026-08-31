@@ -21,7 +21,7 @@ if [[ "${profile}" == "ui" ]]; then
 fi
 
 case "${profile}" in
-  quick|refactor|full-offline|integration) ;;
+  quick|refactor|full-offline|integration|audit) ;;
   *)
     printf 'Unknown profile: %s\n' "${profile}" >&2
     exit 2

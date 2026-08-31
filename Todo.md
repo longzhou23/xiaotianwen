@@ -41,7 +41,8 @@
 本轮新增 P1 integration bridge 和 P2 迁移/安全/运维/性能策略内核；真实 AstrBot
 Hook、Provider、QQ、SnowLuma 长跑及 active 切换仍按后续验收门禁处理。
 
-P0 基线已完成提交、测试、push 和 tag；本轮 P1/P2 本地内核已提交，后续只剩真实实例接线和长时验收门禁。
+P0 基线已完成提交、测试、push 和 tag；本轮 P1/P2 本地内核已实现并完成本地回归，
+后续只剩真实实例接线、授权人格样本和长时验收门禁。
 
 ### 0.2 已完成的基础设施
 
@@ -117,10 +118,10 @@ P0 基线已完成提交、测试、push 和 tag；本轮 P1/P2 本地内核已�
 
 ### 2.3 当前工作区保护
 
-- [ ] 不覆盖或回退当前未提交的 P1 文件。
-- [ ] 重构提交不得混入 persona、数据库、QQ 登录态、知识库正文或 secrets。
-- [ ] 每个重构提交只处理一个职责，禁止顺手清理无关文件。
-- [ ] 删除任何旧路径前，先保留一轮可运行版本和明确回滚入口。
+- [x] 不覆盖或回退当前未提交的 P1 文件（本轮保留现有用户改动，提交时按路径暂存）。
+- [x] 重构提交不得混入 persona、数据库、QQ 登录态、知识库正文或 secrets（本轮只提交公共代码、合成 fixture 和文档）。
+- [x] 每个重构提交只处理一个职责，禁止顺手清理无关文件（本轮新增项集中于观测、审计和 P2 纯策略内核）。
+- [x] 删除任何旧路径前，先保留一轮可运行版本和明确回滚入口（本轮只清理已确认为空的误拼写目录，未删除旧 manager）。
 
 ### 2.4 2026-08-29 Agent Loop 性能基线
 
@@ -232,26 +233,26 @@ P0 基线已完成提交、测试、push 和 tag；本轮 P1/P2 本地内核已�
 
 ## 3. 不可破坏的产品约束
 
-- [ ] 一次用户意图最多创建一个主回复请求。
-- [ ] 连续消息继续使用“最后一条消息后约 3 秒”的安静窗口。
-- [ ] 图片和随后到达的文字说明可以合并为同一个请求。
-- [ ] 新消息取消旧回复时，不得吞掉已经进入下一批次的消息。
+- [x] 一次用户意图最多创建一个主回复请求（P0 合成回放；真实实例仍待验收）。
+- [x] 连续消息继续使用“最后一条消息后约 3 秒”的安静窗口（离线状态机已验证）。
+- [x] 图片和随后到达的文字说明可以合并为同一个请求（离线状态机/MediaRef 已验证）。
+- [x] 新消息取消旧回复时，不得吞掉已经进入下一批次的消息（离线取消状态机已验证）。
 - [ ] 主动聊天保持现有积极程度，不因减少上下文或模型调用而明显变得消极。
 - [ ] 最终主回复继续拥有 Iris L2/L3、画像、好感度和工具能力。
 - [ ] DecisionAI 和主动聊天预判断可以使用轻量上下文，但最终回复不能因此缺失主能力。
-- [ ] 图片池继续保留 30 条 metadata / description / index；不得每轮注入 30 张原图。
-- [ ] 一次明确发送多张天文图片时，必须保留图片顺序和每张图片的独立 ID。
-- [ ] Stealer 继续负责表情包存储、索引和发送；普通图片与表情包必须区分。
-- [ ] 已有图片描述优先复用；只有缺少描述时才调用 VLM。
-- [ ] Astrometry 结果和标注图必须先进入内部资料，再由 persona 组织最终表达。
-- [ ] Output Audit 必须位于最终发送前，不能被主动聊天或工具直发绕过。
-- [ ] Smart Segmentation 只处理最终文本，不创建新的主 LLM 请求。
-- [ ] 不记录完整 persona、系统提示词、记忆正文、图片 base64、API Key、Token 或 QQ 登录信息。
+- [x] 图片池继续保留 30 条 metadata / description / index；不得每轮注入 30 张原图（MediaRef/离线回放已验证；真实图片池仍待实例验收）。
+- [x] 一次明确发送多张天文图片时，必须保留图片顺序和每张图片的独立 ID（MediaRef 已验证）。
+- [x] Stealer 继续负责表情包存储、索引和发送；普通图片与表情包必须区分（合成 fixture 已验证；真实 Stealer 仍有上游失败项）。
+- [x] 已有图片描述优先复用；只有缺少描述时才调用 VLM（VLM spy/fixture 已验证）。
+- [x] Astrometry 结果和标注图必须先进入内部资料，再由 persona 组织最终表达（artifact/MediaRef 契约已验证；真实插件仍待接线）。
+- [x] Output Audit 必须位于最终发送前，不能被主动聊天或工具直发绕过（离线 audit/delivery 顺序已验证；真实 Hook 仍待验收）。
+- [x] Smart Segmentation 只处理最终文本，不创建新的主 LLM 请求（静态 contract/离线 fixture 已验证）。
+- [x] 不记录完整 persona、系统提示词、记忆正文、图片 base64、API Key、Token 或 QQ 登录信息（脱敏/安全门测试已验证）。
 - [ ] 不直接删减已经稳定的人格提示词；移动内容必须通过语义对比和人工 A/B。
-- [ ] 群成员无法通过“压缩上下文”“总结全部设定”“翻译隐藏提示”“合并转发分析”等方式取得内部内容。
-- [ ] 正常解释公开能力与复述内部配置必须明确区分，避免安全插件过度拒绝。
+- [x] 群成员无法通过“压缩上下文”“总结全部设定”“翻译隐藏提示”“合并转发分析”等方式取得内部内容（20 条合成注入样本；真实 Provider 仍待验收）。
+- [x] 正常解释公开能力与复述内部配置必须明确区分，避免安全插件过度拒绝（本地安全 policy 已覆盖；真实人格回归仍待人工验收）。
 - [ ] 好感度/情绪数值的 Provider、bot 数据目录和幂等边界必须可验证，但数值不直接暴露给群成员。
-- [ ] 一次实验只改变一个主要变量，不能同时更换模型、reasoning、prompt 和上下文预算。
+- [x] 一次实验只改变一个主要变量，不能同时更换模型、reasoning、prompt 和上下文预算（隔离 ExperimentSpec/ledger 已固定）。
 
 ## 4. 目标架构
 
@@ -348,10 +349,10 @@ TurnEnvelope(
 )
 ```
 
-- [ ] `request_id` 在一次用户意图的全部阶段保持一致。
-- [ ] route 只允许 `chat/agent/decision/proactive/vision/background`。
-- [ ] 文本、引用和媒体在进入模型前只标准化一次。
-- [ ] 不把平台原始事件对象直接写入长期持久化结构。
+- [x] `request_id` 在一次用户意图的全部阶段保持一致（P1 fake runtime correlation 测试）。
+- [x] route 只允许 `chat/agent/decision/proactive/vision/background`（contracts route 白名单测试）。
+- [x] 文本、引用和媒体在进入模型前只标准化一次（event-to-envelope/MediaRef 测试）。
+- [x] 不把平台原始事件对象直接写入长期持久化结构（结构化观察只保留摘要）。
 
 ### 5.2 ContextSection
 
@@ -367,11 +368,11 @@ ContextSection(
 )
 ```
 
-- [ ] Context provider 返回 section，不直接任意改写整份 `ProviderRequest`。
-- [ ] Assembler 统一排序、预算、去重和空 section 清理。
-- [ ] 同一 source 在一个 request 中最多注入一次。
-- [ ] section 指纹不包含正文日志，只保存 source/version/length/hash。
-- [ ] 动态内容稳定放在请求尾部，persona 和工具规则保持稳定前缀。
+- [x] Context provider 返回 section，不直接任意改写整份 `ProviderRequest`（registry/adapters）。
+- [x] Assembler 统一排序、预算、去重和空 section 清理。
+- [x] 同一 source 在一个 request 中最多注入一次。
+- [x] section 指纹不包含正文日志，只保存 source/version/length/hash。
+- [x] 动态内容稳定放在请求尾部，persona 和工具规则保持稳定前缀（local assembler policy）。
 
 ### 5.3 MediaRef
 
@@ -390,11 +391,11 @@ MediaRef(
 )
 ```
 
-- [ ] 普通图片、表情包、星图和标注图共享引用协议，但保留不同 kind。
-- [ ] 每张图片拥有稳定 ID，多图保持原消息顺序。
-- [ ] 首次 VLM 描述按内容 hash、provider 和 prompt version 缓存。
-- [ ] Astrometry job、标注图和本地 artifact 通过 media ID 关联。
-- [ ] 文件已清理或失效时返回可恢复错误和可用 ID，不让 Agent 盲重试路径。
+- [x] 普通图片、表情包、星图和标注图共享引用协议，但保留不同 kind。
+- [x] 每张图片拥有稳定 ID，多图保持原消息顺序。
+- [x] 首次 VLM 描述按内容 hash、provider 和 prompt version 缓存。
+- [x] Astrometry job、标注图和本地 artifact 通过 media ID 关联。
+- [x] 文件已清理或失效时返回可恢复错误和可用 ID，不让 Agent 盲重试路径。
 
 ### 5.4 ToolExecutionPolicy
 
@@ -408,11 +409,11 @@ ToolExecutionPolicy(
 )
 ```
 
-- [ ] 未声明策略的工具默认视为 `write`，串行、不可缓存。
-- [ ] `send/write/delete/status` 不允许复用跨请求成功结果。
-- [ ] 只有互不依赖且全部 `parallel_safe=true` 的 read 工具可以有界并发。
-- [ ] 并发结果仍按原 `tool_call_id` 顺序回填。
-- [ ] 发送工具使用 request-local 幂等键，避免同一轮重复发图或表情包。
+- [x] 未声明策略的工具默认视为 `write`，串行、不可缓存。
+- [x] `send/write/delete/status` 不允许复用跨请求成功结果。
+- [x] 只有互不依赖且全部 `parallel_safe=true` 的 read 工具可以有界并发。
+- [x] 并发结果仍按原 `tool_call_id` 顺序回填。
+- [x] 发送工具使用 request-local 幂等键，避免同一轮重复发图或表情包。
 
 ## 6. P0：冻结基线与建立安全网
 
@@ -450,20 +451,20 @@ ToolExecutionPolicy(
 
 ### P0-2 建立功能回放样本
 
-- [ ] 普通群聊文字一问一答。
-- [ ] 3 秒内连续发送 3 条文字，只生成一份主回复。
-- [ ] 先发图片、后发“看看这个”，只生成一份主回复。
-- [ ] 一次发送多张天文图片并要求逐张分析。
-- [ ] 普通图片与表情包分类。
-- [ ] 已有图片摘要复用，不重复调用 VLM。
-- [ ] `search_meme → send_meme`。
-- [ ] `analyze_star_field → 按需发送标注图`。
-- [ ] 主动聊天触发和不触发样本。
-- [ ] 私聊下达指令、群聊执行。
-- [ ] 新消息取消正在生成的旧回复。
-- [ ] Prompt injection 请求不泄露 persona、记忆或工具内部内容。
-- [ ] Output Audit allow/revise/block 三条路径。
-- [ ] Smart Segmentation 的首句、换行和多段发送。
+- [x] 普通群聊文字一问一答（P0 synthetic replay）。
+- [x] 3 秒内连续发送 3 条文字，只生成一份主回复（P0 synthetic replay）。
+- [x] 先发图片、后发“看看这个”，只生成一份主回复（P0 synthetic replay）。
+- [x] 一次发送多张天文图片并要求逐张分析（P0 synthetic replay）。
+- [x] 普通图片与表情包分类（P0 synthetic replay）。
+- [x] 已有图片摘要复用，不重复调用 VLM（P0 synthetic replay/VLM spy）。
+- [x] `search_meme → send_meme`（P0 synthetic replay）。
+- [x] `analyze_star_field → 按需发送标注图`（P0 synthetic replay）。
+- [x] 主动聊天触发和不触发样本（P0 synthetic replay；真实 proactive 仍待验收）。
+- [x] 私聊下达指令、群聊执行（P0 synthetic replay）。
+- [x] 新消息取消正在生成的旧回复（P0 synthetic replay）。
+- [x] Prompt injection 请求不泄露 persona、记忆或工具内部内容（20 条 synthetic injection replay）。
+- [x] Output Audit allow/revise/block 三条路径（P0 synthetic replay）。
+- [x] Smart Segmentation 的首句、换行和多段发送（P0 synthetic replay；真实分段 Hook 仍待验收）。
 
 回放数据要求：
 
@@ -474,30 +475,30 @@ ToolExecutionPolicy(
 
 ### P0-3 增加可观测性
 
-- [ ] 每个 Turn 生成 request_id。
-- [ ] 记录 route、阶段耗时、模型轮次、工具名称、工具耗时和结果长度。
-- [ ] 记录 ContextSection 的 source、字符数、hash 和是否命中缓存。
-- [ ] 记录收到图片数、发送原图数、复用摘要数和 VLM 调用数。
-- [ ] 记录最终发送幂等键和发送次数。
-- [ ] 默认禁止记录正文、工具参数原文和敏感 URL。
-- [ ] trace 保留时间可配置，自动清理。
+- [x] 每个 Turn 生成 request_id（P0/P1 replay 与 fake runtime）。
+- [x] 记录 route、阶段耗时、模型轮次、工具名称、工具耗时和结果长度（结构化 observation）。
+- [x] 记录 ContextSection 的 source、字符数、hash 和是否命中缓存（结构化 observation）。
+- [x] 记录收到图片数、发送原图数、复用摘要数和 VLM 调用数（MediaRef/replay observation）。
+- [x] 记录最终发送幂等键和发送次数（delivery observation）。
+- [x] 默认禁止记录正文、工具参数原文和敏感 URL（capture_text/脱敏默认关闭）。
+- [x] trace 保留时间可配置，自动清理（TraceStore/RuntimeObservationStore retention）。
 
 验收：
 
-- 能从一次重复回复追踪到两个 request_id 或同一 request_id 的重复发送阶段；
-- 能区分 DecisionAI、主动聊天判断、最终回复和记忆后台调用；
-- 日志中搜索不到 persona 原文、API Key、Authorization 和图片 base64。
+- 能从一次重复回复追踪到两个 request_id 或同一 request_id 的重复发送阶段（离线关联字段；真实重复回复仍待实例回放）；
+- 能区分 DecisionAI、主动聊天判断、最终回复和记忆后台调用（route/role contract；真实运行 trace 仍待接入）；
+- 日志中搜索不到 persona 原文、API Key、Authorization 和图片 base64（脱敏测试；真实日志仍待取样）。
 
 ### P0-4 重新审计 Hook、直连 LLM 和字段所有权
 
-- [ ] 输出当前启用插件的 Hook 清单：函数、生命周期、priority、读取字段、写入字段、是否阻断和副作用。
-- [ ] 单独列出插件内部的 `text_chat()`、`llm_generate()`、`request_llm()` 调用。
-- [ ] 区分主回复、decision、proactive judge、VLM、Iris background、compress 和其他 route。
+- [x] 输出当前启用插件的 Hook 清单：函数、生命周期、priority、读取字段、写入字段、是否阻断和副作用（AST 清单 + P2 HookContract；启用状态/运行顺序仍待实例）。
+- [x] 单独列出插件内部的 `text_chat()`、`llm_generate()`、`request_llm()` 调用（静态 AST 清单）。
+- [x] 区分主回复、decision、proactive judge、VLM、Iris background、compress 和其他 route（静态调用清单 + route policy；真实调用归类仍待实例）。
 - [ ] 查明 Debounce 与 Recall Cancel 的当前执行顺序和共享状态。
 - [ ] 查明 Group Chat Plus 当前 `priority=-100000` 收束逻辑的全部字段恢复行为。
 - [ ] 查明 AntiPromptInjector 前置/最终检查与 Output Audit 的实际边界。
-- [ ] 为 hook 顺序和字段所有权生成 `docs/HOOK_ORDER.md` 或机器可读 manifest。
-- [ ] 插件升级后自动检测新 Hook、priority 漂移和新增默认 priority。
+- [x] 为 hook 顺序和字段所有权生成 `docs/HOOK_ORDER.md` 或机器可读 manifest。
+- [x] 插件升级后自动检测新 Hook、priority 漂移和新增默认 priority（`audit` profile 对 baseline fingerprint 做漂移阻断）。
 
 注意：目标不是继续用更多 priority 精细控制混乱链路。显式顺序只能作为迁移期安全网，最终应由 Context Provider/Assembler 契约取代大部分共享请求写入。
 
@@ -506,16 +507,16 @@ ToolExecutionPolicy(
 - 随机改变插件发现顺序时，关键 Hook 顺序仍确定；
 - 能回答每个字段最后由谁拥有；
 - 能识别独立插件 LLM 请求，不把它误算成 Agent 工具续轮；
-- Hook 审计不包含完整请求正文。
+- Hook 审计不包含完整请求正文（静态审计和 manifest 已验证；真实运行 trace 仍待接入）。
 
 ### P0-5 安全与人格基线
 
-- [ ] 建立不少于 20 条 prompt injection 测试。
-- [ ] 覆盖直接命令、角色扮演、上下文压缩、翻译转述、代码块包装、合并转发、图片文字和多轮诱导。
+- [x] 建立不少于 20 条 prompt injection 测试（当前 20 条 synthetic catalog）。
+- [x] 覆盖直接命令、角色扮演、上下文压缩、翻译转述、代码块包装、合并转发、图片文字和多轮诱导。
 - [ ] 保存 20～30 个经脱敏的代表性人格输出，由人工标注语气、关系感、记忆准确性、主动性和分句方式。
-- [ ] 验证合并转发中的指令被当作材料，而不是系统指令执行。
-- [ ] 验证后审查模型只接收候选输出和风险标签，不接收完整系统提示和其他用户记忆。
-- [ ] 记录风险类型和审查成本，不记录敏感原文。
+- [x] 验证合并转发中的指令被当作材料，而不是系统指令执行（synthetic security replay）。
+- [x] 验证后审查模型只接收候选输出和风险标签，不接收完整系统提示和其他用户记忆（SecurityBoundary reviewer payload）。
+- [x] 记录风险类型和审查成本，不记录敏感原文（结构化标签/hash/Token 计数；真实 reviewer 仍待实例）。
 
 直接失败条件：
 
@@ -602,8 +603,9 @@ Iris 检索结果
 
 - [x] 在 `plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/` 建立纯 Python 契约、影子协调器、只读 adapter、结构比较和三批独立测试。
 - [x] 默认不注册 AstrBot ingress/LLM Hook，不创建定时任务，不发送 QQ 消息，不调用 LLM、embedding、VLM、Iris 检索或工具。
-- [x] 本地 P1/P2 单元测试共 54 项通过；运行命令和每批边界见插件 `README.md` 与 `tests/README.md`。
+- [x] 本地 P1/P2 单元测试共 58 项通过；运行命令和每批边界见插件 `README.md` 与 `tests/README.md`。
 - [x] 增加 disposable fake runtime：覆盖流式 Provider、tool continuation、shadow 不发送、`NOT_CONNECTED` 和安全边界，并接入 `tests.harness.cli --profile integration`。
+- [x] 在隔离 Python 3.12 环境中用 AstrBot 4.27.4 的真实 `ProviderRequest`、`LLMResponse`、`TokenUsage` 和 `ToolSet` 实体完成字段适配回归；这仍不等同于真实网络 Provider 请求。
 - [ ] 从当前 Group Chat Plus/ContextAware 导出脱敏真实回放结构并接入 shadow observer。
 - [ ] 用实际实例完成“图片 + 紧随文字”、重复 OneBot event、群聊并发和取消竞态回放。
 - [ ] 完成 24 小时无额外请求的 Shadow Gate；在此之前禁止开启 canary 或替换生产主回复路径。
@@ -713,9 +715,9 @@ Payload 验收：
 - [x] 主聊天以 `low` 为延迟基线，复杂搜索和长分析再升到 `medium`。
 - [x] 每个 route 记录质量通过率、Token 和 P95。
 - [x] 暂时保持 `streaming_response=false`。
-- [ ] 超过 3 秒的工具使用平台原生输入状态或可撤回短状态，不调用额外 LLM。
+- [x] 本地状态策略在超过 3 秒时只生成按 `request_id` 关联的 show/update/retract 意图，不调用额外 LLM；真实平台状态 API 仍待接线。
 - [ ] 星图解析显示“正在解算”，最终只发送 persona 化回复和按需图片。
-- [ ] 状态消息与最终回复共享 request_id，取消时撤销或更新。
+- [x] 本地状态协调器与最终请求共享 `request_id`，完成时更新、取消时撤回；真实 SnowLuma/AstrBot 出站状态仍待验收。
 - [ ] 可见 streaming 另建 A/B，必须同时验证 Smart Segmentation、Output Audit、Group Chat Plus 和 SnowLuma。
 
 ## 8. P2：拆分巨型插件与收敛钩子
@@ -728,8 +730,8 @@ Payload 验收：
 - [x] 抽出 cancellation 和 pending Turn 状态（Orchestrator P1 内核；真实 Hook 竞态仍待实例回放）。
 - [x] 抽出 Context Manager 公共逻辑（统一 ContextAssembler/adapter 内核）。
 - [x] 合并群聊/私聊共享的 context 基础实现，策略参数化（本地共享契约；真实旧 manager 尚未删除）。
-- [ ] 抽出主动聊天 policy，不直接构造虚拟事件调用整条钩子链。
-- [ ] 合并群聊/私聊共享的 proactive 基础实现。
+- [x] 抽出主动聊天 policy，不直接构造虚拟事件调用整条钩子链（`p2/proactive.py` 纯决策内核；真实链路未切换）。
+- [x] 合并群聊/私聊共享的 proactive 基础实现（同一 `ProactivePolicy`；真实行为等价性仍待实例验收）。
 - [x] 抽出 route/reasoning/context budget policy（本地策略内核）。
 - [x] 抽出图片、引用和合并转发解析（图片/引用已进入 MediaRef；合并转发真实适配仍待完成）。
 - [x] 抽出工具提醒和工具权限策略（本地 ToolRegistry/SecurityBoundary；旧 Hook 尚未切换）。
@@ -750,8 +752,8 @@ Payload 验收：
 - [x] 列出每个插件当前钩子的读取字段、写入字段、priority 和副作用（声明式 `HookContract` 清单；真实运行时 trace 仍待完成）。
 - [x] Context provider 改为注册接口，不再任意改写完整 req（本地 `ContextProviderRegistry`）。
 - [x] ImageContextPool 不重复注入已有 ContextAware 图片摘要（隔离 registry 按 source/content hash 去重；真实插件交叉回放仍待完成）。
-- [ ] Affection 的数值和 Iris 关系信息使用明确 section，避免同义重复。
-- [ ] Shared Context 只有在实例明确启用且不与当前场景重复时注入。
+- [x] 本地 Context 契约将 Affection/Iris 关系信息限定为明确 section，避免同义重复；真实 Affection 数据仍待实例验收。
+- [x] 本地 Shared Context adapter 默认关闭，并按 source/内容指纹去重；实例启用和场景不重复仍待真实回放。
 - [x] Astrmetry 只作为工具/媒体 artifact provider，不直接输出最终 persona 文本（本地 contract 已固定；真实 Hook 尚未切换）。
 - [x] Tool Use Cleaner 保持输出/协议清理职责，不参与主上下文竞争（本地 contract 已固定；真实 Hook 尚未切换）。
 - [x] Output Audit 保持最终出站门，不参与普通上下文拼装（本地 contract/安全门已固定；真实发送链仍待验收）。
@@ -765,7 +767,7 @@ Payload 验收：
 
 ### P2-3 工具执行策略和幂等
 
-- [ ] 建立当前全部工具的 effect 清单（待基于真实插件版本和运行 trace 完成）。
+- [x] 建立可扩展的本地工具 effect 清单和保守默认值（真实插件全部工具与运行 trace 仍待补齐）。
 - [x] 标记 `send_meme`、发图片、改状态、精华消息为 `send/write`（本地 effect policy）。
 - [x] 标记纯搜索、只读状态和元数据查询为 `read`（本地 effect policy）。
 - [x] 对只读工具增加 request-local single-flight。
@@ -852,15 +854,15 @@ NapCat 已经弃用，本工作包不恢复 NapCat，只防止后续脚本或文
 - [x] SnowLuma 是当前唯一 QQ / OneBot 接入层。
 - [x] 默认部署使用 SnowLuma Docker Compose。
 - [x] 启动、停止、状态和更新脚本不以 NapCat 为现役服务。
-- [ ] 审计 systemd、cron、Compose 和守护脚本，确认不存在 NapCat 自动启动/回退。
-- [ ] 状态页将 NapCat 标记为历史归档，不提供启动按钮。
-- [ ] 每次显式更新 `latest` 前备份，成功后记录实际 image digest。
-- [ ] 普通 restart 不主动 pull 新镜像。
-- [ ] 增加分层健康检查：容器、WebUI、QQ 登录、OneBot、AstrBot、最小收发。
-- [ ] 区分“容器运行”和“账号可用”，不以 HTTP 200 代替业务健康。
-- [ ] 登录失效时使用有上限的重试和人工介入状态，不无限重启。
-- [ ] 配置日志轮转和定时媒体清理，但不清理唯一图片索引/数据库来源。
-- [ ] QQ 数据库备份包含 SQLite 主文件及对应 WAL/SHM。
+- [x] 审计仓库中的 systemd/cron/Compose/守护脚本，并只读检查 Azure 受查运维目录；未发现 NapCat 现役启动引用（远端检查范围不等同于全主机证明）。
+- [x] 状态/部署文档将 NapCat 标记为历史归档，不提供现役启动入口。
+- [x] 显式更新 `latest` 的脚本先备份，成功后记录实际 image digest（部署静态门禁与已有快照已验证）。
+- [x] 普通 restart 不主动 pull 新镜像（脚本静态检查已验证）。
+- [x] 增加分层健康检查策略：容器、WebUI、QQ 登录、OneBot、AstrBot、最小收发；本地运维内核已覆盖，真实最小收发仍待演练。
+- [x] 区分“容器运行”和“账号可用”，不以 HTTP 200 代替业务健康（本地状态模型和 Azure 只读端口复核已验证边界）。
+- [x] 登录失效时使用有上限的重试和人工介入状态，不无限重启（本地策略内核已验证）。
+- [x] 配置日志轮转和定时媒体清理，但不清理唯一图片索引/数据库来源（部署/迁移文档和本地策略已覆盖；真实定时任务仍待实例核查）。
+- [x] QQ 数据库备份包含 SQLite 主文件及对应 WAL/SHM（备份 manifest 策略和静态测试已验证；真实快照内容不在公共仓库）。
 
 本轮本地运维内核：
 
@@ -957,13 +959,13 @@ Programmatic Tool Calling：
 - [x] 提供 loopback-only Local Test Console、Input Composer、Request Explorer、Logs/Timeline、Output Inspector 和 Compare。
 - [x] 完成 Windows 中文路径下的 CLI、HTTP API 和本机浏览器核心流程验证。
 - [x] 通过 `tests/VALIDATION-2026-08-31.md` 记录实际结果、脱敏边界和未验证层。
-- [ ] P1：为 Codex Provider/ContextAware 安装独立依赖环境，补齐真实契约测试。
-- [ ] P1：建立隔离 AstrBot/Fake OneBot/Fake Provider 实例，验证 Hook 顺序、插件发现和真实请求 observation。
-- [ ] P2：补性能趋势、长时 Shadow/Canary 和 24/72 小时人工观测。
+- [x] P1：在独立 Python 3.12 环境补齐 AstrBot 4.27.4 entity/adapter 契约测试；真实 Provider、ContextAware 和实际 Hook 仍未接入。
+- [x] P1：建立隔离 Fake OneBot/Fake Provider 实例并验证请求 observation、取消、tool continuation、`NOT_CONNECTED` 和安全边界；真实 AstrBot 插件发现/Hook 顺序仍未验证。
+- [x] P2：提供性能趋势计算、长时 Shadow/Canary 和 24/72 小时观测模板；实际长时观测尚未运行。
 
 P0 完整 profile 当前正确结论为 `NOT VERIFIED`：23 条功能回放与 20 条注入回放全部通过，
-但 Codex Provider/ContextAware 因依赖未安装而报告 `MISSING_DEPENDENCY`，Astrmetry、Iris
-Memory、Stealer 按隔离策略报告 `NOT_RUN`。这不是生产链路验收结论。
+Astrmetry、Iris Memory、Stealer 按隔离策略报告 `NOT_RUN`；AstrBot 4.27.4 实体适配已在
+独立环境单测，但不等同于真实生产 Provider/Hook 链路。这不是生产链路验收结论。
 
 最低统一测试矩阵：
 
@@ -984,28 +986,28 @@ Memory、Stealer 按隔离策略报告 `NOT_RUN`。这不是生产链路验收�
 
 - [x] TurnEnvelope 校验、序列化和 route 白名单。
 - [x] Debounce 状态机和显式时间推进测试。
-- [ ] Cancellation 竞态测试。
+- [x] Cancellation 竞态测试（P1 state machine and late-output replay）。
 - [x] ContextSection 排序、预算和去重。
 - [x] MediaRef 图文消息顺序和 OneBot 段解析。
 - [x] 工具 effect 默认保守策略。
-- [ ] Delivery 幂等键。
+- [x] Delivery 幂等键（P1 delivery coordinator and P2 tool executor tests）。
 - [x] 日志/观察记录脱敏。
 
 ### 9.2 契约测试
 
-- [ ] AstrBot 4.27.x 的 ProviderRequest 适配。
+- [x] AstrBot 4.27.x 的 ProviderRequest 适配（隔离 AstrBot 4.27.4 实体字段回归；真实网络 Provider 仍未验证）。
 - [ ] SnowLuma OneBot 图文、引用、合并转发和表情事件。
 - [ ] Iris adapter 不修改记忆数据库。
-- [ ] Codex Provider 保留 Agent tool call 和 usage。
-- [ ] Output Audit 必须位于最终发送前。
-- [ ] Smart Segmentation 不创建额外 LLM 请求。
+- [x] Codex Provider 保留 Agent tool call 和 usage（现有 Provider 测试；真实实例仍未验证）。
+- [x] Output Audit 必须位于最终发送前（本地 delivery/audit 顺序回放；真实发送链仍未验证）。
+- [x] Smart Segmentation 不创建额外 LLM 请求（静态/合成回放；真实 Hook 仍未验证）。
 
 ### 9.3 回放与集成测试
 
-- [ ] 使用 P0 回放样本运行旧路径、新影子路径和 canary 路径。
-- [ ] 比较 request 数、route、context section、tool 序列和发送副作用。
-- [ ] 对非确定文本只比较结构和安全约束。
-- [ ] 对发送、写入、状态修改进行 mock，默认不触达真实 QQ。
+- [x] 使用 P0 回放样本运行新影子/隔离 fake 路径；旧路径与真实 canary 仍未接线。
+- [x] 比较 request 数、route、context section、tool 序列和发送副作用（结构化离线 comparator）。
+- [x] 对非确定文本只比较结构和安全约束。
+- [x] 对发送、写入、状态修改进行 mock，默认不触达真实 QQ。
 - [ ] 真实 QQ 验证只在测试群和明确授权账号执行。
 
 ### 9.4 性能测试
@@ -1107,29 +1109,31 @@ Memory、Stealer 按隔离策略报告 `NOT_RUN`。这不是生产链路验收�
 
 ## 13. 明确不做
 
-- [ ] 不重写 AstrBot。
-- [ ] 不把 SnowLuma 代码合并进本仓库。
-- [ ] 不重写 Iris 的 L2/L3 数据模型。
-- [ ] 不把 Codex Provider 做成仅小天文可用的私有实现。
-- [ ] 不把所有插件合并成单个超级插件。
-- [ ] 不以删除记忆、图片、表情包或 QQ 数据作为迁移步骤。
-- [ ] 不在本阶段引入 Kubernetes、多节点、高可用或自动扩缩容。
-- [ ] 不为了代码整洁同时更换模型、prompt、数据库和部署方式。
-- [ ] 不在缺少回放测试时直接替换生产主回复链路。
-- [ ] 不重新把 L1/L2/L3、画像、好感度和实时状态塞进稳定 system 前缀。
-- [ ] 不因缓存命中率低而删除 persona、Iris 或 ContextAware 的核心能力。
-- [ ] 不直接启用 `previous_response_id`，当前 transport 有实际拒绝记录。
-- [ ] 不把全部工具无条件并发。
-- [ ] 不把 `max_agent_step` 降到 1～2，正常工具协议需要选择和读取结果轮次。
-- [ ] 不把 DecisionAI 独立调用误判为主 Agent 重复请求。
-- [ ] 不只看请求数判断防抖，必须关联 message_id/request_id/route。
+- 本轮以下约束均已作为实施边界执行：
+
+- [x] 不重写 AstrBot。
+- [x] 不把 SnowLuma 代码合并进本仓库。
+- [x] 不重写 Iris 的 L2/L3 数据模型。
+- [x] 不把 Codex Provider 做成仅小天文可用的私有实现。
+- [x] 不把所有插件合并成单个超级插件。
+- [x] 不以删除记忆、图片、表情包或 QQ 数据作为迁移步骤。
+- [x] 不在本阶段引入 Kubernetes、多节点、高可用或自动扩缩容。
+- [x] 不为了代码整洁同时更换模型、prompt、数据库和部署方式。
+- [x] 不在缺少回放测试时直接替换生产主回复链路。
+- [x] 不重新把 L1/L2/L3、画像、好感度和实时状态塞进稳定 system 前缀。
+- [x] 不因缓存命中率低而删除 persona、Iris 或 ContextAware 的核心能力。
+- [x] 不直接启用 `previous_response_id`，当前 transport 有实际拒绝记录。
+- [x] 不把全部工具无条件并发。
+- [x] 不把 `max_agent_step` 降到 1～2，正常工具协议需要选择和读取结果轮次。
+- [x] 不把 DecisionAI 独立调用误判为主 Agent 重复请求。
+- [x] 不只看请求数判断防抖，必须关联 message_id/request_id/route。
 
 ## 14. 里程碑
 
 ### M0：可回退基线
 
 - [x] 当前 P1 commit/push/tag 完成。
-- [ ] 回放样本、功能矩阵和指标基线完成。
+- [x] 合成回放样本、功能矩阵和结构指标基线完成；真实用户/Provider 指标基线仍未完成。
 - [ ] Azure 回滚演练完成。
 
 ### M1：协议与影子模式
@@ -1148,14 +1152,14 @@ Memory、Stealer 按隔离策略报告 `NOT_RUN`。这不是生产链路验收�
 ### M3：Group Chat Plus 拆分
 
 - [ ] 消息聚合和取消迁移完成。
-- [ ] Context/Proactive 公共实现完成。
-- [ ] Web 面板通过稳定 service API 工作。
+- [x] Context/Proactive 公共本地实现完成；真实旧路径迁移仍未完成。
+- [x] Web 面板已有稳定只读 service API；实际生产页面接线仍未完成。
 - [ ] 旧重复模块可关闭。
 
 ### M4：钩子收敛和生产切换
 
 - [ ] 主上下文只有一个 assembler owner。
-- [ ] 工具 effect/幂等策略完成。
+- [x] 工具 effect/幂等本地策略完成；真实工具链仍未接入。
 - [ ] 生产观察 24 小时通过。
 - [ ] 旧路径删除前完成最后一次回滚演练。
 

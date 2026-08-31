@@ -31,6 +31,7 @@ from .performance import (
     default_long_run_templates,
     summarize_performance,
 )
+from .proactive import ProactiveDecision, ProactiveInput, ProactivePolicy, StatusNotice, StatusNoticeCoordinator
 from .provider_registry import (
     ContextProviderRegistry,
     ProviderCollection,
@@ -71,6 +72,9 @@ __all__ = [
     "PermissionDecision",
     "PerformanceSample",
     "PerformanceSummary",
+    "ProactiveDecision",
+    "ProactiveInput",
+    "ProactivePolicy",
     "ProviderBinding",
     "ProviderCollection",
     "ProviderFailure",
@@ -82,6 +86,8 @@ __all__ = [
     "SecurityBoundary",
     "ServiceSnapshot",
     "ServiceHealthSnapshot",
+    "StatusNotice",
+    "StatusNoticeCoordinator",
     "ToolCall",
     "ToolExecutionResult",
     "ToolExecutor",

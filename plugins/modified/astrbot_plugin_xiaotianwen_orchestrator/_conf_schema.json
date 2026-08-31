@@ -14,6 +14,13 @@
     "type": "bool",
     "default": false
   },
+  "observation_retention_seconds": {
+    "description": "内存观测记录保留时间（秒），到期自动清理；默认 24 小时",
+    "type": "float",
+    "default": 86400.0,
+    "min": 60.0,
+    "max": 604800.0
+  },
   "quiet_window_seconds": {
     "description": "影子回放使用的消息安静窗口（秒）",
     "type": "float",

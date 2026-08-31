@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +20,7 @@ HOOK_DECORATORS = {
     "platform_adapter_type",
 }
 LLM_CALLS = {"text_chat", "text_chat_stream", "llm_generate", "request_llm"}
+HOOK_MANIFEST_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +30,14 @@ class HookAuditRecord:
     decorator: str
     priority: str
 
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "path": self.path,
+            "function": self.function,
+            "decorator": self.decorator,
+            "priority": self.priority,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class LlmCallAuditRecord:
@@ -34,6 +45,14 @@ class LlmCallAuditRecord:
     function: str
     call: str
     line: int
+
+    def to_dict(self) -> dict[str, str | int]:
+        return {
+            "path": self.path,
+            "function": self.function,
+            "call": self.call,
+            "line": self.line,
+        }
 
 
 def _decorator_name(value: ast.expr) -> str | None:
@@ -86,6 +105,57 @@ def scan_plugins(repository_root: Path) -> tuple[tuple[HookAuditRecord, ...], tu
                         break
                 calls.append(LlmCallAuditRecord(relative, parent_name, node.func.attr, node.lineno))
     return tuple(hooks), tuple(calls)
+
+
+def build_manifest(repository_root: Path) -> dict[str, object]:
+    """Build a JSON-safe static inventory and stable drift fingerprint."""
+
+    hooks, calls = scan_plugins(repository_root)
+    hook_values = [item.to_dict() for item in hooks]
+    call_values = [item.to_dict() for item in calls]
+    canonical = json.dumps(
+        {"hooks": hook_values, "llm_calls": call_values},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return {
+        "schema_version": HOOK_MANIFEST_SCHEMA_VERSION,
+        "hook_count": len(hook_values),
+        "llm_call_count": len(call_values),
+        "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        "hooks": hook_values,
+        "llm_calls": call_values,
+    }
+
+
+def load_baseline(repository_root: Path) -> dict[str, object]:
+    """Read the checked-in static baseline without accepting arbitrary paths."""
+
+    path = repository_root / "tests" / "fixtures" / "hook-audit-baseline.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != HOOK_MANIFEST_SCHEMA_VERSION:
+        raise ValueError("hook audit baseline has an unsupported schema")
+    if not isinstance(payload.get("fingerprint"), str):
+        raise ValueError("hook audit baseline must contain a fingerprint")
+    return payload
+
+
+def compare_manifest(current: dict[str, object], baseline: dict[str, object]) -> tuple[str, ...]:
+    """Return actionable drift descriptions; an empty tuple means no drift."""
+
+    errors: list[str] = []
+    if current.get("schema_version") != baseline.get("schema_version"):
+        errors.append("hook audit manifest schema changed")
+    if current.get("fingerprint") != baseline.get("fingerprint"):
+        errors.append(
+            "hook audit fingerprint changed: "
+            f"expected {baseline.get('fingerprint')}, got {current.get('fingerprint')}"
+        )
+    for key in ("hook_count", "llm_call_count"):
+        if key in baseline and current.get(key) != baseline.get(key):
+            errors.append(f"{key} changed: expected {baseline.get(key)}, got {current.get(key)}")
+    return tuple(errors)
 
 
 def render_markdown(repository_root: Path) -> str:

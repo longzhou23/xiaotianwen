@@ -12,7 +12,7 @@ SnowLuma、真实 Provider 或公网服务。为验证插件兼容性，另在�
 |---|---|---|
 | `py -m py_compile <tests/harness、tests/selftests、tests/ui、Orchestrator 测试的全部 Python 文件>` | 通过 | 语法编译完成 |
 | `py -m pytest -q tests/selftests` | `28 passed` | 框架正向测试、12 个故障注入、自身报告/路径/脱敏/UI HTTP、P1 fake runner 和部署静态门禁 |
-| `Python 3.12 -m pytest -q tests plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests` | `99 passed` | P0 harness、UI、P1 fake integration、P1/P2 Orchestrator |
+| `Python 3.12 -m pytest -q tests plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests` | `105 passed, 1 warning` | P0 harness、UI、P1 fake integration、AstrBot 4.27.4 entity adapter、P1/P2 Orchestrator；警告来自依赖包的 `audioop` 弃用 |
 | `Python 3.12 -m pytest -q plugins/modified/astrbot_plugin_chatgpt_codex/tests` | 通过 | Codex Provider 本地测试集合全部通过；首次暴露并修复 Windows SQLite 临时文件句柄问题 |
 | `Python 3.12 -m pytest -q plugins/modified/astrbot_plugin_astrmetry/tests` | `3 passed` | P1 依赖环境验证 |
 | `Python 3.12 -m pytest -q plugins/upstream/astrbot_plugin_iris_memory/tests` | `1496 passed, 1 skipped, 4 failed` | 上游 Windows/配置边界问题，保留为未通过，不篡改上游行为 |
@@ -23,15 +23,20 @@ SnowLuma、真实 Provider 或公网服务。为验证插件兼容性，另在�
 | `py -m tests.harness.cli compare --case p0-group-text-single --baseline approved --run-id p0-compare-no-approved` | `NOT VERIFIED` | 没有 approved baseline；命令不会自动创建或覆盖 Golden |
 | `Python 3.12 -m tests.harness.cli run --profile integration --run-id p1-p2-final-20260831` | `NOT VERIFIED` | 4/4 fake checks 通过，46 条观测；真实 AstrBot/Provider/QQ/长跑门禁保持未验证 |
 | `Python 3.12 -m tests.harness.cli run --profile full-offline --run-id p1-p2-offline-regression-20260831` | `NOT VERIFIED` | 回放 43/43；插件矩阵 7 PASSED / 3 NOT_RUN / 0 FAILED |
+| `Python 3.12 -m tests.harness.cli run --profile audit --run-id p0-audit-final-20260831` | `PASS` | 静态 Hook/direct-LLM 清单与基线指纹一致：56 hooks、25 direct calls |
+| `Python 3.12 -m tests.harness.cli run --profile full-offline --run-id p0-offline-final-20260831` | `NOT VERIFIED` | 回放 43/43；插件矩阵 7 PASSED / 3 NOT_RUN / 0 FAILED；无 security violation |
+| `Python 3.12 -m tests.harness.cli run --profile integration --run-id p1-p2-final-20260831-2` | `NOT VERIFIED` | 4/4 fake checks 通过；真实 AstrBot/Provider/QQ/SnowLuma/长跑仍保持未验证 |
 
 ## P1/P2 本轮实现增量
 
 本轮完成的是公共仓库内、默认 dormant 的本地策略和观测内核，不改变当前生产主回复链：
 
 - `integration/` 提供不持有平台对象的 AstrBot adapter、结构化观测、脱敏字段摘要和 disposable fake runtime；fake runtime 不连接 socket、Docker、QQ、Provider、数据库或模型。
-- `p2/` 提供 Provider registry、声明式 Hook contract、工具 effect/幂等执行、安全边界、Affection 绑定与后台任务注册表、分层健康/备份 manifest、隔离实验 ledger、性能摘要和稳定只读 service facade。
+- `p2/` 提供 Provider registry、声明式 Hook contract、工具 effect/幂等执行、安全边界、Affection 绑定与后台任务注册表、主动聊天/长请求状态策略、分层健康/备份 manifest、隔离实验 ledger、性能摘要和稳定只读 service facade。
+- 观测存储和 `TraceStore` 具备可配置的时间保留与自动清理；默认日志只保存结构字段，正文展示必须显式开启并经过限长脱敏。
+- `tests.harness.cli --profile audit` 对插件源码做 AST 静态清单和 checked-in fingerprint 漂移阻断，不导入或运行插件。
 - `main.py` 只准备配置、观测存储和显式 adapter，不注册真实 AstrBot ingress、LLM Hook、Provider、工具、定时任务或 QQ delivery；`observation_capture_text` 默认关闭。
-- 99 项全量 Python 测试、编译检查和 `git diff --check` 通过。`integration` 的 46 条观测明确包含 `COMPLETE`、`PARTIAL`、`NOT_CONNECTED`，没有把未连接状态记作 0。
+- 105 项全量 Python 测试、编译检查和 `git diff --check` 通过。实际 AstrBot 4.27.4 `ProviderRequest`/`LLMResponse`/`TokenUsage`/`ToolSet` 字段已用合成对象做适配回归；仍不等同于真实 Provider 请求。`integration` 的观测明确包含 `COMPLETE`、`PARTIAL`、`NOT_CONNECTED`，没有把未连接状态记作 0。
 
 仍未完成且不能由上述结果替代的门禁：真实 AstrBot 临时实例/插件发现/Hook priority/Plugin Page、真实 Provider/QQ/SnowLuma、Group Chat Plus 旧路径只读接线、100 Turn canary、24 小时 Shadow Gate、72 小时 SnowLuma 长跑、空白 VM 恢复和任何生产 active 切换。P2 的旧 manager 删除、`plugins.lock.yaml` 退役标记及实际 `on_llm_request` 所有权迁移继续保持未勾选。
 
@@ -102,3 +107,20 @@ UI 的自动 HTTP 测试覆盖 CSRF、回环绑定、合成输入、分阶段 ou
 多模态请求或 Orchestrator 24 小时 Shadow Gate 的通过证明。部署后日志只做了不输出正文
 的宽泛错误模式计数，未将其作为业务结论；如需进一步判断必须在测试会话中做脱敏
 结构观测，不直接打印原始日志。
+
+## Azure 只读状态复核（2026-08-31）
+
+本轮只读复核通过 SSH 别名 `azure-xtw-01` 完成，没有修改远端文件、拉取镜像、重启
+容器或读取业务日志正文：
+
+| 检查 | 结果 |
+|---|---|
+| 主机 | `xiaotianwen-01` |
+| `astrbot` | running，restart count `0`，容器端口 `6200/8001` 映射存在 |
+| `snowluma` | running，restart count `0`，容器端口 `5099/6081` 映射存在 |
+| loopback TCP | `6200/8001/5099/6081` 均可连接 |
+| loopback HTTP 根路径 | `8001=405`、`5099=200`、`6081=200`；只证明端口/协议响应，不证明 QQ 账号可用或业务收发 |
+| 受查运维目录中的 NapCat 文本引用 | 未发现；范围为 `/etc/systemd/system`、`/etc/cron.*`、`/opt`、`/srv`，不是全主机证明 |
+
+当前没有以此复核结果冒充真实用户会话、Hook 顺序、Provider、QQ 收发、Affection
+写入或 24/72 小时门禁证据。

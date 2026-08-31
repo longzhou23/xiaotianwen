@@ -8,6 +8,7 @@ still credential-redacted and bounded.  No platform object is retained.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import time
 from collections import deque
@@ -176,10 +177,11 @@ class RuntimeObservation:
 
 @dataclass(slots=True)
 class RuntimeObservationStore:
-    """Bounded in-memory retention with explicit sequence gaps on overflow."""
+    """Bounded in-memory retention with size and optional time bounds."""
 
     run_id: str
     max_entries: int = 2_000
+    retention_seconds: float | None = None
     _records: deque[RuntimeObservation] = field(default_factory=deque, init=False, repr=False)
     _next_sequence: int = field(default=1, init=False, repr=False)
     dropped_count: int = field(default=0, init=False)
@@ -187,6 +189,13 @@ class RuntimeObservationStore:
     def __post_init__(self) -> None:
         self.run_id = require_identifier(self.run_id, "run_id")
         self.max_entries = require_positive_int(self.max_entries, "max_entries")
+        if self.retention_seconds is not None and (
+            isinstance(self.retention_seconds, bool)
+            or not isinstance(self.retention_seconds, (int, float))
+            or not math.isfinite(float(self.retention_seconds))
+            or self.retention_seconds <= 0
+        ):
+            raise ContractValidationError("retention_seconds must be a positive finite number")
 
     def emit(
         self,
@@ -228,7 +237,24 @@ class RuntimeObservationStore:
             self._records.popleft()
             self.dropped_count += 1
         self._records.append(record)
+        self._prune_by_time(at=record.timestamp)
         return record
+
+    def _prune_by_time(self, *, at: float) -> None:
+        if self.retention_seconds is None:
+            return
+        cutoff = at - float(self.retention_seconds)
+        while self._records and self._records[0].timestamp < cutoff:
+            self._records.popleft()
+            self.dropped_count += 1
+
+    def prune(self, *, at: float) -> int:
+        """Drop observations older than the configured retention window."""
+
+        at = require_finite_timestamp(at, "at")
+        before = len(self._records)
+        self._prune_by_time(at=at)
+        return before - len(self._records)
 
     def snapshot(self) -> tuple[RuntimeObservation, ...]:
         return tuple(self._records)
@@ -322,15 +348,21 @@ class ObservationAdapter:
         model: str,
         message_count: int,
         stream: bool,
+        tool_count: int = 0,
         prompt: str | None = None,
         parent_request_id: str | None = None,
         timestamp: float | None = None,
     ) -> RuntimeObservation:
+        if isinstance(message_count, bool) or not isinstance(message_count, int) or message_count < 0:
+            raise ContractValidationError("message_count must be a non-negative integer")
+        if isinstance(tool_count, bool) or not isinstance(tool_count, int) or tool_count < 0:
+            raise ContractValidationError("tool_count must be a non-negative integer")
         payload: dict[str, object] = {
             "role": role,
             "model": model,
             "message_count": message_count,
             "stream": stream,
+            "tool_count": tool_count,
         }
         if prompt is not None:
             payload.update({"prompt_chars": len(prompt), "prompt_hash": sha256_text(prompt)})
@@ -355,6 +387,8 @@ class ObservationAdapter:
         )
 
     def request_completed(self, request_id: str, *, role: str, finish_reason: str, usage: Mapping[str, object] | None = None, tool_call_count: int = 0, parent_request_id: str | None = None, timestamp: float | None = None) -> RuntimeObservation:
+        if isinstance(tool_call_count, bool) or not isinstance(tool_call_count, int) or tool_call_count < 0:
+            raise ContractValidationError("tool_call_count must be a non-negative integer")
         payload: dict[str, object] = {"role": role, "finish_reason": finish_reason, "tool_call_count": tool_call_count}
         if usage:
             payload["usage"] = dict(usage)
@@ -426,15 +460,30 @@ class ObservationAdapter:
             delivery_id=delivery_id,
         )
 
-    def log(self, *, level: str, message: str, request_id: str | None = None, timestamp: float | None = None) -> RuntimeObservation:
+    def log(
+        self,
+        *,
+        level: str,
+        message: str,
+        capture_text: bool = False,
+        request_id: str | None = None,
+        timestamp: float | None = None,
+    ) -> RuntimeObservation:
+        payload: dict[str, object] = {
+            "level": level.upper(),
+            "message_chars": len(message),
+            "message_hash": sha256_text(message),
+        }
+        if capture_text:
+            payload["display"] = message
         return self.store.emit(
             "log.emitted",
             source=self.source,
             status=level.lower(),
             timestamp=timestamp,
-            payload={"level": level.upper(), "display": message},
+            payload=payload,
             display_keys=frozenset({"display"}),
-            capture_mode="COMPLETE",
+            capture_mode="COMPLETE" if capture_text else "PARTIAL",
             request_id=request_id,
         )
 

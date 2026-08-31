@@ -142,17 +142,18 @@ class FakeProvider:
 class FakeOneBot:
     """Connection state only; event values are normalized at the boundary."""
 
-    def __init__(self, observer: ObservationAdapter) -> None:
+    def __init__(self, observer: ObservationAdapter, *, capture_text: bool = False) -> None:
         self.observer = observer
+        self.capture_text = capture_text
         self.connected = True
 
     def disconnect(self, *, timestamp: float | None = None) -> None:
         self.connected = False
-        self.observer.log(level="WARNING", message="Fake OneBot disconnected", timestamp=timestamp)
+        self.observer.log(level="WARNING", message="Fake OneBot disconnected", capture_text=self.capture_text, timestamp=timestamp)
 
     def reconnect(self, *, timestamp: float | None = None) -> None:
         self.connected = True
-        self.observer.log(level="INFO", message="Fake OneBot reconnected", timestamp=timestamp)
+        self.observer.log(level="INFO", message="Fake OneBot reconnected", capture_text=self.capture_text, timestamp=timestamp)
 
 
 class FakeAstrBotRuntime:
@@ -169,8 +170,9 @@ class FakeAstrBotRuntime:
         registry: ContextProviderRegistry | None = None,
     ) -> None:
         self.store = RuntimeObservationStore(run_id)
+        self.capture_text = capture_text
         self.observer = ObservationAdapter(self.store, source="FAKE_ASTRBOT")
-        self.onebot = FakeOneBot(self.observer)
+        self.onebot = FakeOneBot(self.observer, capture_text=capture_text)
         self.provider = FakeProvider(self.observer, outcome=provider_outcome)
         self.coordinator = ShadowTurnCoordinator(enabled=True, quiet_window_seconds=quiet_window_seconds)
         resolved_mode = mode if isinstance(mode, OrchestratorMode) else OrchestratorMode.parse(mode)
@@ -190,7 +192,6 @@ class FakeAstrBotRuntime:
             )
         )
         self.tool_executor = ToolExecutor(self.tool_registry, max_read_concurrency=3)
-        self.capture_text = capture_text
         self.last_request_id: str | None = None
 
     @staticmethod
@@ -292,7 +293,7 @@ class FakeAstrBotRuntime:
         except FakeProviderError as exc:
             self.coordinator.mark_stage(turn.request_id, TurnState.CANCELLED)
             self.observer.turn_stage(turn, stage="cancelled", status="failed", timestamp=now)
-            self.observer.log(level="ERROR", message=f"Fake provider failed: {type(exc).__name__}", request_id=turn.request_id, timestamp=now)
+            self.observer.log(level="ERROR", message=f"Fake provider failed: {type(exc).__name__}", capture_text=self.capture_text, request_id=turn.request_id, timestamp=now)
             return
 
         if response.tool_calls:

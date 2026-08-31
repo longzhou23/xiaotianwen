@@ -16,12 +16,24 @@ from tests.harness.replay import ReplayEngine, build_interactive_case
 from tests.harness.sandbox import RunSandbox
 from tests.harness.config import profile_definition
 from tests.harness.spies import DeliverySpy, ToolSpy, VLMSpy
+from tests.harness.trace import TraceStore
 
 
 def test_virtual_clock_is_monotonic() -> None:
     clock = VirtualClock(10)
     assert clock.advance(0.5) == 10.5
     assert clock.set(11) == 11
+
+
+def test_trace_store_has_configurable_time_retention_and_sequence_gap() -> None:
+    trace = TraceStore("trace-retention", max_events=10, retention_seconds=2)
+    trace.emit("first", at=0, source="TEST", payload={"value": 1})
+    trace.emit("second", at=1, source="TEST", payload={"value": 2})
+    trace.emit("third", at=3, source="TEST", payload={"value": 3})
+
+    assert [event.kind for event in trace.snapshot()] == ["second", "third"]
+    assert [event.sequence for event in trace.snapshot()] == [2, 3]
+    assert trace.dropped_count == 1
 
 
 def test_deterministic_ids_repeat_for_fresh_factories() -> None:
