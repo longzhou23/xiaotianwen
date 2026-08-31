@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="xtw-csrf" content="{{CSRF_TOKEN}}">
+    <title>小天文本地测试台</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header>
+      <h1>小天文本地测试台</h1>
+      <p id="connection">P0 离线内存 Harness · Fake OneBot / Provider: Capture COMPLETE · AstrBot: NOT_CONNECTED</p>
+    </header>
+    <main>
+      <section class="panel composer">
+        <h2>Input Composer</h2>
+        <label>Route
+          <select id="route"><option value="private">private</option><option value="group_passive">group_passive</option><option value="group_proactive">group_proactive</option></select>
+        </label>
+        <label>Fake Provider
+          <select id="provider"><option value="final">普通完成</option><option value="stream">流式</option><option value="tool">工具调用</option><option value="timeout">超时</option><option value="cancel">取消</option><option value="error">错误</option></select>
+        </label>
+        <label>Event Template
+          <select id="template"><option value="plain">普通文本</option><option value="reply">引用</option><option value="mention">@</option><option value="merged_forward">合并转发</option><option value="meme">表情包</option></select>
+        </label>
+        <label>消息（多条以空行分隔）<textarea id="input" rows="8" placeholder="输入合成测试文本；仅当前本地浏览器会话保留完整原文。"></textarea></label>
+        <label><input id="image" type="checkbox"> 添加一张合成图片描述</label>
+        <div class="buttons"><button id="new-run">新建 Run</button><button id="send">发送测试</button><button id="cancel">取消 Run</button></div>
+        <p id="run-status">尚未创建 Run。未连接生产 AstrBot，不会把未知请求显示为 0。</p>
+      </section>
+      <section class="panel">
+        <h2>Runs / Request Explorer</h2>
+        <pre id="runs">[]</pre>
+        <pre id="requests">等待测试输入。</pre>
+      </section>
+      <section class="panel">
+        <h2>Output Inspector</h2>
+        <pre id="outputs">Provider → Audit → Cleaner → Segmentation → Delivery 会在这里按阶段显示。</pre>
+      </section>
+      <section class="panel wide">
+        <h2>AstrBot / Harness Logs & Timeline</h2>
+        <pre id="timeline">P0 仅显示 Harness/Fake 日志；AstrBot 未连接时明确标记。</pre>
+      </section>
+      <section class="panel wide">
+        <h2>Compare</h2>
+        <pre id="compare">未加载 approved baseline；不会伪装成通过。</pre>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

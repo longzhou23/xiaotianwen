@@ -80,6 +80,11 @@ plugins:
     source: local-custom
     modified: true
     review_status: owner-confirmation-required
+  - name: astrbot_plugin_xiaotianwen_orchestrator
+    category: modified
+    source: local-custom
+    modified: true
+    review_status: shadow-only-not-production-enabled
   - name: input_state_by_napcat
     category: retired
     source: https://github.com/ctrlkk/astrbot_plugin_input_state_by_nc

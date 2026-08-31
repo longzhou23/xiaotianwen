@@ -77,6 +77,22 @@ CREATE TABLE IF NOT EXISTS usage_meta (
 """
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Close SQLite handles when a ``with`` block exits on Windows.
+
+    ``sqlite3.Connection.__exit__`` commits or rolls back, but deliberately
+    leaves the connection open.  The storage gateway creates short-lived
+    connections, so leaving that handle to cyclic GC can keep ``usage.db``
+    locked while a test or a deployment rotates the data directory.
+    """
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        try:
+            super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class UsageStorage:
     """SQLite gateway for cumulative snapshots and turn deltas."""
 
@@ -86,7 +102,7 @@ class UsageStorage:
         self._lock = asyncio.Lock()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, timeout=10)
+        connection = sqlite3.connect(self.path, timeout=10, factory=_ClosingConnection)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=10000")
         connection.execute("PRAGMA journal_mode=WAL")

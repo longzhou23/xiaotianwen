@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "format_note": "This file uses the JSON subset of YAML 1.2 so the P0 harness has no PyYAML runtime dependency.",
+  "plugins": [
+    {
+      "id": "framework-selftests",
+      "path": "tests/selftests",
+      "category": "harness",
+      "profiles": ["quick", "refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "tests/selftests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest"],
+      "enabled": true
+    },
+    {
+      "id": "xiaotianwen-orchestrator",
+      "path": "plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests",
+      "category": "modified",
+      "profiles": ["quick", "refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest"],
+      "enabled": true
+    },
+    {
+      "id": "astrbot-plugin-chatgpt-codex",
+      "path": "plugins/modified/astrbot_plugin_chatgpt_codex/tests",
+      "category": "modified",
+      "profiles": ["refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/modified/astrbot_plugin_chatgpt_codex/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest", "tzdata"],
+      "enabled": true
+    },
+    {
+      "id": "astrbot-plugin-output-audit",
+      "path": "plugins/modified/astrbot_plugin_output_audit/tests",
+      "category": "modified",
+      "profiles": ["refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/modified/astrbot_plugin_output_audit/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest"],
+      "enabled": true
+    },
+    {
+      "id": "astrbot-plugin-context-aware",
+      "path": "plugins/modified/astrbot_plugin_context_aware/tests",
+      "category": "modified",
+      "profiles": ["refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/modified/astrbot_plugin_context_aware/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest", "PIL"],
+      "enabled": true
+    },
+    {
+      "id": "astrbot-plugin-group-chat-plus",
+      "path": "plugins/modified/astrbot_plugin_group_chat_plus/tests",
+      "category": "modified",
+      "profiles": ["refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/modified/astrbot_plugin_group_chat_plus/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest"],
+      "enabled": true
+    },
+    {
+      "id": "astrbot-plugin-astrmetry",
+      "path": "plugins/modified/astrbot_plugin_astrmetry/tests",
+      "category": "modified",
+      "profiles": ["refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/modified/astrbot_plugin_astrmetry/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest"],
+      "enabled": false,
+      "not_run_reason": "P0 covers star-image behavior with fake media; the plugin's dependency environment is deferred to P1."
+    },
+    {
+      "id": "astrbot-plugin-iris-memory",
+      "path": "plugins/upstream/astrbot_plugin_iris_memory/tests",
+      "category": "upstream",
+      "profiles": ["refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/upstream/astrbot_plugin_iris_memory/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest"],
+      "enabled": false,
+      "not_run_reason": "P0 must not install or read the upstream Iris runtime/data dependencies; report as not verified."
+    },
+    {
+      "id": "astrbot-plugin-stealer",
+      "path": "plugins/upstream/astrbot_plugin_stealer/tests",
+      "category": "upstream",
+      "profiles": ["refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/upstream/astrbot_plugin_stealer/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest"],
+      "enabled": false,
+      "not_run_reason": "P0 does not create a meme database or install Stealer dependencies; only its declared status is reported."
+    },
+    {
+      "id": "astrbot-plugin-recall-cancel",
+      "path": "plugins/upstream/astrbot_plugin_recall_cancel/tests",
+      "category": "upstream",
+      "profiles": ["refactor", "full-offline"],
+      "command": ["{python}", "-m", "pytest", "-q", "plugins/upstream/astrbot_plugin_recall_cancel/tests"],
+      "timeout_seconds": 60,
+      "offline": true,
+      "requires": ["pytest"],
+      "enabled": true
+    }
+  ]
+}

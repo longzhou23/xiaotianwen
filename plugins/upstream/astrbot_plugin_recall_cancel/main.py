@@ -80,6 +80,7 @@ class PendingRequest:
     llm_response_started_at: float | None = None  # wall time, 对齐 context_aware
     llm_response_sequence: int = 0  # 本插件内的会话级 LLM 响应序号
     context_bot_msg_id: str | None = None  # context_aware 中对应 Bot 记录 ID
+    preexisting_context_bot_msg_id: str | None = None  # 响应开始前已存在的同文记录
 
 
 @dataclass(slots=True)
@@ -271,6 +272,7 @@ class RecallStateManager:
         response_preview: str,
         context_bot_msg_id: str | None,
         response_started_at: float | None = None,
+        preexisting_context_bot_msg_id: str | None = None,
     ) -> None:
         """标记待处理请求已有对应的 context_aware Bot 记录。"""
         key = self._compose_key(unified_msg_origin, message_id)
@@ -285,6 +287,9 @@ class RecallStateManager:
                         sequence = self._response_sequences.get(unified_msg_origin, 0) + 1
                         self._response_sequences[unified_msg_origin] = sequence
                         self._pending_requests[key].llm_response_sequence = sequence
+                    self._pending_requests[key].preexisting_context_bot_msg_id = (
+                        preexisting_context_bot_msg_id
+                    )
                 self._pending_requests[key].context_bot_msg_id = context_bot_msg_id
 
     async def is_latest_response_sequence(
@@ -704,6 +709,8 @@ class Main(star.Star):
                 )
             if context_bot_msg_id is None:
                 return False
+            if context_bot_msg_id == pending.preexisting_context_bot_msg_id:
+                return False
             removed = await self._context_aware.remove_last_bot_response_if_matches(
                 umo,
                 pending.llm_response_preview,
@@ -726,6 +733,7 @@ class Main(star.Star):
         sender_id: str,
         response_started_at: float | None,
         response_sequence: int,
+        preexisting_context_bot_msg_id: str | None,
     ) -> None:
         """Handle recalls that stop the LLM hook before the low-priority marker runs."""
         for delay in (0, 0.05, 0.2):
@@ -746,6 +754,8 @@ class Main(star.Star):
                 min_timestamp=response_started_at,
             )
             if marker is None:
+                continue
+            if marker == preexisting_context_bot_msg_id:
                 continue
 
             if await self._context_aware.remove_last_bot_response_if_matches(
@@ -782,6 +792,7 @@ class Main(star.Star):
                 pending.sender_id,
                 pending.llm_response_started_at,
                 pending.llm_response_sequence,
+                pending.preexisting_context_bot_msg_id,
             )
         )
     
@@ -889,12 +900,19 @@ class Main(star.Star):
 
         response_preview = self._get_response_preview(resp)
         if response_preview:
+            sender_id = event.get_sender_id()
+            preexisting_marker = await self._context_aware.get_last_bot_response_marker(
+                umo,
+                response_preview,
+                sender_id,
+            )
             await self._state.mark_pending_response_seen(
                 msg_id,
                 umo,
                 response_preview,
                 context_bot_msg_id=None,
                 response_started_at=time.time(),
+                preexisting_context_bot_msg_id=preexisting_marker,
             )
 
     @filter.on_llm_response(priority=-100)  # run after context_aware default handlers

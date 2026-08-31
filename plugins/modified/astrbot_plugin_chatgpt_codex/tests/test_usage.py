@@ -152,7 +152,8 @@ class UsageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_v1_migration_preserves_legacy_table(self) -> None:
         path = Path(self.temp_dir.name) / "legacy.db"
-        with sqlite3.connect(path) as connection:
+        connection = sqlite3.connect(path)
+        try:
             connection.execute("CREATE TABLE usage_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             connection.execute("INSERT INTO usage_meta VALUES('schema_version', '1')")
             connection.execute(
@@ -163,6 +164,10 @@ class UsageTests(unittest.IsolatedAsyncioTestCase):
             )
             connection.execute("INSERT INTO usage_records VALUES(1, 1, '2026-08-25', NULL, NULL, 'old', 'm', 'auto', 1, 0, 1, NULL, 2, 1)")
             connection.commit()
+            # Windows cannot remove the temporary database while this handle
+            # remains open, so close it explicitly in the finally block.
+        finally:
+            connection.close()
         storage = UsageStorage(path)
         await storage.initialize()
         debug = await storage.debug()

@@ -20,6 +20,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+artifacts/test-runs/
 
 # local AstrBot instance data
 astrobot/data/config/
@@ -37,3 +38,10 @@ deploy/**/.env
 deploy/**/.env.*
 !deploy/**/.env.example
 .host-secrets/
+
+# local test harness outputs
+artifacts/test-runs/
+.test-venv/
+.coverage
+htmlcov/
+test-support/runs/

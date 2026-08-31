@@ -1,0 +1,4 @@
+# P1 placeholder only: never started by the P0 runner.
+# It intentionally has no host port bindings and no production-volume mounts.
+name: xiaotianwen-isolated-test
+services: {}

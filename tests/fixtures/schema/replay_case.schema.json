@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "title": "Xiaotianwen P0 offline replay case",
+  "type": "object",
+  "required": ["id", "title", "route", "timeline", "simulation", "expected", "compare"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{2,119}$"},
+    "title": {"type": "string", "minLength": 1},
+    "route": {"enum": ["chat", "agent", "decision", "proactive", "vision", "background"]},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "timeline": {"type": "array", "minItems": 1},
+    "simulation": {"type": "object"},
+    "expected": {"type": "object"},
+    "compare": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {"text": {"enum": ["structural"]}, "ignore_fields": {"type": "array"}}
+    }
+  },
+  "additionalProperties": false,
+  "notes": [
+    "The stdlib validator in tests.harness.schema enforces the runtime safety rules.",
+    "Fixtures may use virtual /synthetic/ media paths; they may not reference a host path, private data or a network URL.",
+    "No callback, expression or eval-like field is accepted by the P0 runner."
+  ]
+}

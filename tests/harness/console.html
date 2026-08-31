@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="xtw-csrf" content="{{CSRF_TOKEN}}">
+  <title>小天文本地测试控制台</title>
+  <style>
+    :root { color-scheme: dark; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #111827; color: #e5e7eb; }
+    body { margin: 0; min-width: 960px; }
+    header { display:flex; justify-content:space-between; gap:16px; align-items:center; padding:14px 20px; border-bottom:1px solid #334155; background:#0f172a; }
+    h1 { font-size:18px; margin:0; } h2 { font-size:14px; margin:0 0 10px; color:#cbd5e1; }
+    main { display:grid; grid-template-columns: 300px minmax(360px, 1fr) 360px; grid-template-rows: minmax(360px, 1fr) 280px; gap:10px; padding:10px; height:calc(100vh - 64px); box-sizing:border-box; }
+    section { border:1px solid #334155; border-radius:8px; background:#172033; padding:12px; min-height:0; overflow:auto; }
+    #logs { grid-column:1 / 4; }
+    textarea, select, button { font:inherit; border-radius:6px; }
+    textarea, select { width:100%; box-sizing:border-box; color:#e5e7eb; background:#0f172a; border:1px solid #475569; padding:8px; }
+    textarea { min-height:160px; resize:vertical; } select { margin:8px 0; }
+    button { border:0; padding:8px 11px; color:#082f49; background:#7dd3fc; font-weight:600; cursor:pointer; }
+    button:hover { background:#bae6fd; } .muted { color:#94a3b8; font-size:12px; }
+    .badge { padding:3px 6px; border-radius:999px; font-size:12px; background:#1e3a8a; color:#dbeafe; }
+    .badge.pass { background:#14532d; color:#dcfce7; } .badge.fail { background:#7f1d1d; color:#fee2e2; }
+    .item { padding:8px; border-bottom:1px solid #334155; cursor:pointer; } .item:hover, .item.active { background:#24324a; }
+    pre { margin:0; white-space:pre-wrap; word-break:break-word; font-family:Consolas, monospace; font-size:12px; line-height:1.45; }
+    .tabs { display:flex; gap:8px; margin-bottom:10px; } .tab { background:#334155; color:#e5e7eb; } .tab.active { background:#7dd3fc; color:#082f49; }
+    .error { color:#fda4af; } .log-error { color:#fca5a5; } .log-warning { color:#fde68a; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>小天文本地测试控制台</h1>
+    <div><span class="badge">OFFLINE</span> <span class="badge" id="capture">Capture: COMPLETE</span> <span class="badge" id="status">未运行</span></div>
+  </header>
+  <main>
+    <section aria-label="Input Composer">
+      <h2>Input Composer</h2>
+      <p class="muted">输入仅在当前本机测试会话显示；凭据样式字段始终脱敏。</p>
+      <textarea id="input" placeholder="输入合成测试消息"></textarea>
+      <select id="route"><option value="chat">chat</option><option value="agent">agent</option><option value="vision">vision</option><option value="proactive">proactive</option><option value="decision">decision</option></select>
+      <label class="muted"><input type="checkbox" id="stream"> 模拟流式输出</label>
+      <p><button id="run">发送测试</button></p>
+      <h2>Runs</h2>
+      <div id="runs" aria-live="polite"></div>
+    </section>
+    <section aria-label="Request Explorer">
+      <h2>Request Explorer</h2>
+      <p class="muted" id="request-summary">选择或运行一条测试以查看所有已观测请求。</p>
+      <div id="requests"></div>
+      <h2>Request Detail</h2>
+      <pre id="request-detail" class="muted">选择一条请求以查看脱敏请求体、响应与关联 ID。</pre>
+      <h2>Timeline</h2>
+      <div id="timeline"></div>
+    </section>
+    <section aria-label="Output Inspector">
+      <div class="tabs"><button class="tab active" data-panel="outputs">Output</button><button class="tab" data-panel="compare">Compare</button></div>
+      <div id="outputs"></div>
+      <div id="compare" hidden></div>
+    </section>
+    <section id="logs" aria-label="AstrBot Logs">
+      <h2>AstrBot / Harness Logs</h2>
+      <p class="muted">P0 显示 Harness/Fake 日志；真实隔离 AstrBot 日志会在 P1 接入。可按 request_id 搜索。</p>
+      <input id="log-filter" placeholder="筛选 request_id 或关键字" aria-label="日志筛选">
+      <pre id="log-lines"></pre>
+    </section>
+  </main>
+  <script>
+    const csrf = document.querySelector('meta[name="xtw-csrf"]').content;
+    let currentRun = null;
+    const byId = (id) => document.getElementById(id);
+    const pretty = (value) => JSON.stringify(value, null, 2);
+    const clear = (element) => element.replaceChildren();
+    const addText = (container, text, className = '') => { const pre = document.createElement('pre'); pre.textContent = text; if (className) pre.className = className; container.append(pre); };
+    async function api(path, options = {}) {
+      const headers = Object.assign({'Content-Type': 'application/json', 'X-Test-Console-CSRF': csrf}, options.headers || {});
+      const response = await fetch(path, Object.assign({credentials: 'same-origin', headers}, options));
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || '请求失败');
+      return payload;
+    }
+    function renderRuns(runs) {
+      const target = byId('runs'); clear(target);
+      for (const run of runs) {
+        const item = document.createElement('div'); item.className = 'item' + (currentRun && currentRun.run_id === run.run_id ? ' active' : '');
+        item.textContent = `${run.run_id} · ${run.passed ? 'PASS' : 'FAIL'}`;
+        item.onclick = () => loadRun(run.run_id); target.append(item);
+      }
+    }
+    function renderRun(run) {
+      currentRun = run;
+      byId('status').textContent = run.passed ? 'PASS' : 'FAIL';
+      byId('status').className = 'badge ' + (run.passed ? 'pass' : 'fail');
+      byId('capture').textContent = 'Capture: COMPLETE';
+      byId('request-summary').textContent = `${run.requests.length} 条已观测请求；${run.tools.length} 个工具；${run.summary.deliveries} 次最终发送。`;
+      const requests = byId('requests'); clear(requests);
+      for (const request of run.requests) { const item = document.createElement('div'); item.className='item'; item.textContent=`${request.role} · ${request.request_id}`; item.onclick=()=>{ byId('request-detail').textContent=pretty(request); byId('log-filter').value=request.request_id; renderLogs(run); }; requests.append(item); }
+      const timeline = byId('timeline'); clear(timeline); for (const event of run.trace) { const item=document.createElement('div'); item.className='item'; item.textContent=`#${event.sequence} ${event.kind}`; item.onclick=()=>{ if(event.request_id){ byId('log-filter').value=event.request_id; renderLogs(run); }}; timeline.append(item); }
+      const outputs = byId('outputs'); clear(outputs); for (const output of run.outputs) { const title=document.createElement('h2'); title.textContent=output.stage; outputs.append(title); addText(outputs, output.text || pretty(output)); }
+      const compare = byId('compare'); clear(compare); addText(compare, run.validation_errors.length ? run.validation_errors.join('\n') : 'Synthetic baseline matches candidate.');
+      renderLogs(run); refreshRuns();
+    }
+    function renderLogs(run) {
+      const filter = byId('log-filter').value.trim(); const lines = run.logs.filter((log) => !filter || JSON.stringify(log).includes(filter));
+      byId('log-lines').textContent = lines.map((log) => `[${log.level}] ${log.request_id || '-'} ${log.message}`).join('\n') || '没有匹配日志。';
+    }
+    async function loadRun(runId) { try { renderRun(await api('/api/runs/' + encodeURIComponent(runId), {method:'GET'})); } catch (error) { byId('status').textContent=error.message; byId('status').className='badge fail'; } }
+    async function refreshRuns() { try { renderRuns((await api('/api/runs', {method:'GET'})).runs); } catch (_) {} }
+    byId('run').onclick = async () => { try { const text=byId('input').value; const run=await api('/api/runs', {method:'POST', body:JSON.stringify({text, route:byId('route').value, stream:byId('stream').checked})}); renderRun(run); } catch(error) { byId('status').textContent=error.message; byId('status').className='badge fail'; } };
+    byId('log-filter').oninput = () => { if (currentRun) renderLogs(currentRun); };
+    for (const tab of document.querySelectorAll('.tab')) tab.onclick = () => { for (const button of document.querySelectorAll('.tab')) button.classList.remove('active'); tab.classList.add('active'); byId('outputs').hidden = tab.dataset.panel !== 'outputs'; byId('compare').hidden = tab.dataset.panel !== 'compare'; };
+    refreshRuns();
+  </script>
+</body>
+</html>

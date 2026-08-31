@@ -1,0 +1,33 @@
+{
+  "shadow_enabled": {
+    "description": "预留影子模式开关（P1 不注册事件 Hook，保持关闭）",
+    "type": "bool",
+    "default": false
+  },
+  "shared_context_enabled": {
+    "description": "影子 Context Assembler 是否允许读取已提供的 Shared Context 快照（默认关闭）",
+    "type": "bool",
+    "default": false
+  },
+  "quiet_window_seconds": {
+    "description": "影子回放使用的消息安静窗口（秒）",
+    "type": "float",
+    "default": 3.0,
+    "min": 0.1,
+    "max": 30.0
+  },
+  "dedup_ttl_seconds": {
+    "description": "影子回放使用的事件指纹去重 TTL（秒）",
+    "type": "float",
+    "default": 30.0,
+    "min": 1.0,
+    "max": 300.0
+  },
+  "context_budget_chars": {
+    "description": "影子上下文装配的字符预算；不会写入 ProviderRequest",
+    "type": "int",
+    "default": 12000,
+    "min": 1000,
+    "max": 100000
+  }
+}

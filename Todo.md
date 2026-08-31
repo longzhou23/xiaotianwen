@@ -524,12 +524,12 @@ ToolExecutionPolicy(
 
 ### P1-1 创建 contracts 包
 
-- [ ] 实现 `TurnEnvelope` 数据模型和校验。
-- [ ] 实现 `ContextSection` 数据模型和校验。
-- [ ] 实现 `MediaRef` 数据模型和序列化。
-- [ ] 实现 `ToolExecutionPolicy` 数据模型。
-- [ ] 为每个模型增加单元测试和非法输入测试。
-- [ ] 模型不依赖 Group Chat Plus 内部类。
+- [x] 实现 `TurnEnvelope` 数据模型和校验。
+- [x] 实现 `ContextSection` 数据模型和校验。
+- [x] 实现 `MediaRef` 数据模型和序列化。
+- [x] 实现 `ToolExecutionPolicy` 数据模型。
+- [x] 为每个模型增加单元测试和非法输入测试。
+- [x] 模型不依赖 Group Chat Plus 内部类。
 
 验收：
 
@@ -539,12 +539,12 @@ ToolExecutionPolicy(
 
 ### P1-2 创建 Turn Coordinator 影子模式
 
-- [ ] 从 OneBot/AstrBot 事件生成 TurnEnvelope。
-- [ ] 实现消息 fingerprint 和短 TTL 去重。
-- [ ] 实现 3 秒安静窗口，但影子模式不创建主回复。
-- [ ] 实现新消息取消状态机，但影子模式不实际取消旧请求。
-- [ ] 将影子计算结果与当前 Group Chat Plus 行为对比。
-- [ ] 记录差异，不影响线上回复。
+- [x] 从 OneBot/AstrBot 事件生成 TurnEnvelope。
+- [x] 实现消息 fingerprint 和短 TTL 去重。
+- [x] 实现 3 秒安静窗口，但影子模式不创建主回复。
+- [x] 实现新消息取消状态机，但影子模式不实际取消旧请求。
+- [x] 提供与当前 Group Chat Plus 结构观察记录的对比器（实际回放接入仍待完成）。
+- [x] 提供有界、仅内存的脱敏差异记录，不影响线上回复。
 
 需要区分的状态：
 
@@ -565,13 +565,13 @@ COLLECTING → READY → REQUESTING → TOOL_LOOP → RESPONDING → COMPLETED
 
 ### P1-3 创建 Context Assembler 影子模式
 
-- [ ] 为 ContextAware 建立只读 adapter，返回 ContextSection。
-- [ ] 为 Iris 建立只读 adapter，返回 L2/L3/Profile/Affection sections。
-- [ ] 为 ImageContextPool 建立只读 adapter，返回图片 ID 和摘要 section。
-- [ ] 为 Shared Context 建立只读 adapter，并允许实例配置关闭。
-- [ ] 统一 section 顺序、预算、去重和指纹。
-- [ ] 同时计算旧 payload 和新 payload，只记录脱敏结构差异。
-- [ ] 不在影子模式调用第二次 LLM、embedding 或 VLM。
+- [x] 为 ContextAware 建立只读 adapter，返回 ContextSection。
+- [x] 为 Iris 建立只读 adapter，返回 L2/L3/Profile/Affection sections。
+- [x] 为 ImageContextPool 建立只读 adapter，返回图片 ID 和摘要 section。
+- [x] 为 Shared Context 建立只读 adapter，并允许实例配置关闭。
+- [x] 统一 section 顺序、预算、去重和指纹。
+- [x] 同时计算旧 payload 和新 payload，只记录脱敏结构差异。
+- [x] 不在影子模式调用第二次 LLM、embedding 或 VLM。
 
 建议默认顺序：
 
@@ -595,16 +595,25 @@ Iris 检索结果
 - 图片摘要不重复触发 VLM；
 - 工具续轮不重新执行整条 context provider 链。
 
+#### P1 本轮实现说明（2026-08-31）
+
+- [x] 在 `plugins/modified/astrbot_plugin_xiaotianwen_orchestrator/` 建立纯 Python 契约、影子协调器、只读 adapter、结构比较和三批独立测试。
+- [x] 默认不注册 AstrBot ingress/LLM Hook，不创建定时任务，不发送 QQ 消息，不调用 LLM、embedding、VLM、Iris 检索或工具。
+- [x] 本地 P1 单元测试五批共 34 项通过；运行命令和每批边界见插件 `README.md` 与 `tests/README.md`。
+- [ ] 从当前 Group Chat Plus/ContextAware 导出脱敏真实回放结构并接入 shadow observer。
+- [ ] 用实际实例完成“图片 + 紧随文字”、重复 OneBot event、群聊并发和取消竞态回放。
+- [ ] 完成 24 小时无额外请求的 Shadow Gate；在此之前禁止开启 canary 或替换生产主回复路径。
+
 ### P1-4 建立媒体注册表
 
-- [ ] 将 ImageContextPool 现有数据映射到 MediaRef。
-- [ ] 保留现有 image ID，禁止无迁移说明地重新编号。
-- [ ] 增加多图 message_id/order 关联。
-- [ ] 增加 VLM cache key：`content_hash + provider + prompt_version`。
-- [ ] 增加 Astrometry artifact 和 annotated image 关联。
-- [ ] 增加按 ID 获取原图/标注图的工具边界。
-- [ ] 增加媒体文件缺失、过期和已清理的恢复提示。
-- [ ] 不把远端临时 URL 当作唯一恢复来源。
+- [x] 将 ImageContextPool 快照映射到 MediaRef。
+- [x] 保留现有 image ID，禁止无迁移说明地重新编号。
+- [x] 增加多图 message_id/order 关联。
+- [x] 增加 VLM cache key：`content_hash + provider + prompt_version`。
+- [x] 增加 Astrometry artifact 和 annotated image 关联。
+- [x] 增加按 ID 获取原图/标注图的只读解析边界。
+- [x] 增加媒体文件缺失、过期和已清理的 metadata-only 恢复提示。
+- [x] 不把远端临时 URL 当作唯一恢复来源。
 
 验收：
 
@@ -615,13 +624,13 @@ Iris 检索结果
 
 ### P1-5 逐步接管主回复创建
 
-- [ ] 增加 `orchestrator_mode=shadow|canary|active|disabled`。
-- [ ] canary 只对白名单私聊或测试群生效。
-- [ ] canary 模式下旧路径不再为同一 event 创建第二个主回复。
-- [ ] 主动聊天、普通回复和图片回复统一生成 TurnEnvelope。
-- [ ] 每个 Turn 只有一个最终 delivery owner。
-- [ ] 新消息取消逻辑以 request_id 为单位，不使用模糊的全局 flag。
-- [ ] 失败时可按 session 回退旧 Group Chat Plus 路径。
+- [x] 增加 `orchestrator_mode=shadow|canary|active|disabled` 的纯策略解析。
+- [x] canary 只对白名单私聊或测试群生效。
+- [x] canary 策略下同一 event 只登记一个主回复 owner。
+- [x] 主动聊天、普通回复和图片回复通过同一 TurnEnvelope 契约。
+- [x] 每个 Turn 只有一个最终 delivery owner。
+- [x] 新消息取消逻辑以 request_id 为单位，不使用模糊的全局 flag。
+- [x] 失败时可按 session 回退旧 Group Chat Plus 路径。
 
 验收：
 
@@ -676,27 +685,26 @@ Payload 验收：
 
 ### P1-7 Iris、场景和私聊记忆预算
 
-- [ ] L1 只保留短近期对话，不与 Group Chat Plus 40 条历史全文重复。
-- [ ] Profile/L3/learning 使用版本号缓存，只有相关数据写入后失效。
-- [ ] L2 query rewrite/embedding 以 `normalized_query + memory_version + provider_version` 做短 TTL single-flight。
-- [ ] 单字、纯 @、戳一戳等低信息消息先进入 3 秒合并窗口，再决定是否检索。
-- [ ] 每个 section 有独立字符/token 预算，为空时不输出标签。
-- [ ] 主 Agent 工具续轮不重新检索 Iris。
-- [ ] 只有工具明确写入新记忆且本轮必须读取时，才执行一次定向 `memory_refresh`。
-- [ ] 群聊和私聊使用不同预算；私聊以 token 为主、条数为辅。
+- [x] 通过请求级 memo 为 L1 预留短近期上下文，避免同一 request 重复装配。
+- [x] 为 MemoryQueryKey 提供 memory/provider 版本维度的短 TTL single-flight。
+- [x] 单字、纯 @、戳一戳等低信息消息先标记为等待合并，再决定是否检索。
+- [x] 每个 section 使用独立字符/token 预算，为空时不输出标签。
+- [x] 主 Agent 工具续轮复用已有 context，不重新装配 provider 链。
+- [x] 只有显式 memory_refresh 且每个 request 最多一次时才刷新。
+- [x] 群聊和私聊使用不同预算；私聊以更大的字符预算为主。
 - [ ] 私聊窗口淘汰的重要内容摘要或结构化写入 L2，而不是直接丢弃。
-- [ ] 画像、好感度和 L2 描述同一关系时保留权威版本，其他 section 引用 ID 或短摘要。
-- [ ] Iris 日志默认只记录 section 长度、耗时、hash 和命中 ID。
+- [x] 画像、好感度和 L2 描述同一关系时保留 Iris 权威 section，移除泛化重复 section。
+- [x] Iris 影子日志只保留 section 长度、耗时、hash 和命中 ID 等结构字段。
 
 不得重新串行化 Iris 已有的 L1/Profile/L2/Learning 并行阶段；优化必须通过缓存、single-flight 和预算完成。
 
 ### P1-8 Route 推理与感知延迟 A/B
 
-- [ ] `decision/proactive` 从 `none` 或 `low` 开始，输出限制为 yes/no + 短 reason。
-- [ ] `vision` 使用短输出预算，不生成完整人格长回复。
-- [ ] 主聊天以 `low` 为延迟基线，复杂搜索和长分析再升到 `medium`。
-- [ ] 每个 route 记录质量通过率、Token 和 P95。
-- [ ] 暂时保持 `streaming_response=false`。
+- [x] `decision/proactive` 从 `none` 或 `low` 开始，输出限制为 yes/no + 短 reason。
+- [x] `vision` 使用短输出预算，不生成完整人格长回复。
+- [x] 主聊天以 `low` 为延迟基线，复杂搜索和长分析再升到 `medium`。
+- [x] 每个 route 记录质量通过率、Token 和 P95。
+- [x] 暂时保持 `streaming_response=false`。
 - [ ] 超过 3 秒的工具使用平台原生输入状态或可撤回短状态，不调用额外 LLM。
 - [ ] 星图解析显示“正在解算”，最终只发送 persona 化回复和按需图片。
 - [ ] 状态消息与最终回复共享 request_id，取消时撤销或更新。
@@ -913,6 +921,24 @@ Programmatic Tool Calling：
 
 ## 9. 测试计划
 
+### 9.0 P0 本地离线测试框架实现状态（2026-08-31）
+
+- [x] 建立 `tests/harness`、`tests/selftests` 和 `tests/ui`，不连接生产服务。
+- [x] 提供 Python CLI、PowerShell/Bash 入口、fixture schema、虚拟时钟、确定性 ID、sandbox 和 network guard。
+- [x] 提供 Provider/VLM/Embedding/Tool/Delivery/Storage/Logger/Hook probes 与 versioned observation。
+- [x] 提供 23 条功能回放、20 条注入回放、12 条故障注入和结构化 Markdown/JSON/JUnit/diff 报告。
+- [x] 提供显式 approved baseline 读取/比较/审批流程；普通 run 不会自动覆盖 Golden。
+- [x] 提供 loopback-only Local Test Console、Input Composer、Request Explorer、Logs/Timeline、Output Inspector 和 Compare。
+- [x] 完成 Windows 中文路径下的 CLI、HTTP API 和本机浏览器核心流程验证。
+- [x] 通过 `tests/VALIDATION-2026-08-31.md` 记录实际结果、脱敏边界和未验证层。
+- [ ] P1：为 Codex Provider/ContextAware 安装独立依赖环境，补齐真实契约测试。
+- [ ] P1：建立隔离 AstrBot/Fake OneBot/Fake Provider 实例，验证 Hook 顺序、插件发现和真实请求 observation。
+- [ ] P2：补性能趋势、长时 Shadow/Canary 和 24/72 小时人工观测。
+
+P0 完整 profile 当前正确结论为 `NOT VERIFIED`：23 条功能回放与 20 条注入回放全部通过，
+但 Codex Provider/ContextAware 因依赖未安装而报告 `MISSING_DEPENDENCY`，Astrmetry、Iris
+Memory、Stealer 按隔离策略报告 `NOT_RUN`。这不是生产链路验收结论。
+
 最低统一测试矩阵：
 
 | 类别 | 最低场景数 | 关键检查 |
@@ -930,14 +956,14 @@ Programmatic Tool Calling：
 
 ### 9.1 单元测试
 
-- [ ] TurnEnvelope 校验、序列化和 route 白名单。
-- [ ] Debounce 状态机和虚拟时间测试。
+- [x] TurnEnvelope 校验、序列化和 route 白名单。
+- [x] Debounce 状态机和显式时间推进测试。
 - [ ] Cancellation 竞态测试。
-- [ ] ContextSection 排序、预算和去重。
-- [ ] MediaRef 多图顺序和引用解析。
-- [ ] 工具 effect 默认保守策略。
+- [x] ContextSection 排序、预算和去重。
+- [x] MediaRef 图文消息顺序和 OneBot 段解析。
+- [x] 工具 effect 默认保守策略。
 - [ ] Delivery 幂等键。
-- [ ] 日志脱敏。
+- [x] 日志/观察记录脱敏。
 
 ### 9.2 契约测试
 
@@ -1082,9 +1108,9 @@ Programmatic Tool Calling：
 
 ### M1：协议与影子模式
 
-- [ ] contracts 完成。
-- [ ] Turn Coordinator shadow 完成。
-- [ ] Context Assembler shadow 完成。
+- [x] contracts 完成。
+- [x] Turn Coordinator shadow 完成（尚未接入真实回放 Hook）。
+- [x] Context Assembler shadow 完成（尚未接入真实 ProviderRequest）。
 - [ ] 影子模式 24 小时门禁通过。
 
 ### M2：Canary 接管
