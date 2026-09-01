@@ -666,24 +666,26 @@ Iris 检索结果
 - [x] 提交并 push 当前 Provider/Group Chat Plus 修改（public `810d284`）。
 - [x] 部署前备份 Azure 实例配置和插件运行数据（2026-08-31 `xiaotianwen-instance-20260831-002816.tar.gz`）。
 - [x] 将本轮公共测试框架/P1/P2 dormant 代码同步到 Azure `c1b6bd1`；停服前创建私有归档和运行时回退快照，使用 `RESTORE_INSTANCE=0` 保留现有实例，`deploy/verify.sh` 通过且两容器 restart count 为 0。
-- [ ] 在测试会话验证动态块、图片和 tools 各只出现一次。
-- [ ] 抓取脱敏 payload 结构，验证 instructions/tools/cache key 稳定。
-- [ ] 验证 direct provider 调用在 contexts 未包含 extras 时仍追加一次动态内容。
-- [ ] 验证真实用户重复说相同文本时不会被错误去重。
-- [ ] 验证多模态 message 不丢 image/audio/reply/file/video part。
-- [ ] 验证工具续轮只新增 assistant tool call 和 tool result。
+- [x] 在离线 transport 测试会话验证动态块、图片和 tools 各只出现一次；真实 Azure 会话仍由发布门禁复验。
+- [x] 以只含长度、计数和指纹的脱敏 diagnostics 验证 instructions/tools/cache key 稳定，不保存正文。
+- [x] 验证 direct provider 调用在 contexts 未包含 extras 时仍追加一次动态内容。
+- [x] 验证真实用户重复说相同文本时不会被错误去重；并修正“长文本完全相等”误判边界。
+- [x] 验证多模态 message 不丢 image/audio/reply/file/video part。
+- [x] 验证工具续轮只新增 assistant tool call 和 tool result。
 - [ ] 观察 24 小时 route、Token、cache、P50/P95 和错误率。
 - [ ] 未通过时回滚插件 commit，不清理 Iris、图片池或数据库。
 
 Payload 验收：
 
-- [ ] 每个 Iris/ContextAware/Affection/ImageContextPool section 最多一次；
-- [ ] payload 不再含完整“可用工具列表”，Responses `tools` 正常存在；
-- [ ] tools hash 在插件未变更时保持稳定；
-- [ ] 用户名、好感度、当前时间和 L2 结果变化不改变稳定 cache family；
-- [ ] persona 或工具 schema 更新时 cache key 必须变化；
-- [ ] main/decision/proactive/vision 使用不同 route；
-- [ ] 图片 data URI 不在同一 payload 重复。
+- [x] 每个 Iris/ContextAware/Affection/ImageContextPool section 最多一次（ContextAssembler 离线契约）；
+- [x] Responses `tools` 正常存在且按 schema 稳定排序；Group Chat Plus 的完整“可用工具列表”线上缺失仍由 Azure payload 门禁复验；
+- [x] tools hash 在插件未变更时保持稳定；
+- [x] 用户名、好感度、当前时间和 L2 结果变化不改变稳定 cache family；
+- [x] persona 或工具 schema 更新时 cache key 必须变化；
+- [x] main/chat、decision、proactive、vision 使用不同 route cache family；
+- [x] 图片 data URI 不在同一 payload 重复。
+
+2026-09-02 离线验收：Codex Provider/transport 相关 67 项测试通过；Orchestrator 58 项中 57 通过、1 项因本机未安装 AstrBot 而明确跳过；仓库 `full-offline` 回放 43/43，通过的 7 个插件矩阵项无失败、无网络/写入违规。Astrometry、Iris、Stealer 和真实 AstrBot/QQ/SnowLuma 仍为 `NOT_RUN`，不由上述结果推断生产通过。
 
 性能阶段目标：
 

@@ -186,7 +186,14 @@ def _extras_are_already_assembled(
         return False
     for value in (request.prompt, request.last_user_text):
         candidate = (value or "").replace("\r\n", "\n").strip()
-        if candidate == extra_text or candidate.endswith("\n" + extra_text):
+        # Equality alone is ambiguous: a user is allowed to repeat the same
+        # long text that another plugin also supplied as temporary context.
+        # AstrBot's assembled shape contains the real user message followed by
+        # the extra block, so require a non-empty prefix and a line boundary.
+        # This keeps the optimization narrowly scoped instead of turning it
+        # into a general text deduplicator.
+        suffix = "\n" + extra_text
+        if candidate.endswith(suffix) and candidate[: -len(suffix)].strip():
             return True
     return False
 

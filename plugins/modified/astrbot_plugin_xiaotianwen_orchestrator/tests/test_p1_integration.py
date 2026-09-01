@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from astrbot_plugin_xiaotianwen_orchestrator.contracts import TurnEnvelope
 from astrbot_plugin_xiaotianwen_orchestrator.ingress import OrchestratorMode, event_to_envelope
 from astrbot_plugin_xiaotianwen_orchestrator.integration import (
@@ -61,6 +63,10 @@ def test_explicit_astrbot_adapter_records_shape_without_prompt_body() -> None:
 def test_astrbot_427_entities_are_adapted_without_using_prompt_bodies() -> None:
     """Exercise the fields used by the installed AstrBot 4.27.x entities."""
 
+    pytest.importorskip(
+        "astrbot",
+        reason="requires an installed AstrBot runtime; exercised again in the Azure container gate",
+    )
     from astrbot.core.agent.tool import FunctionTool
     from astrbot.core.provider.entities import LLMResponse, ProviderRequest, TokenUsage
     from astrbot.core.provider.entities import ToolSet

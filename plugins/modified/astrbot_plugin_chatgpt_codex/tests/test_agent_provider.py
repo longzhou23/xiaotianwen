@@ -142,6 +142,16 @@ class AgentProviderContractTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    def test_repeated_real_user_text_is_not_treated_as_assembled_dynamic_context(self):
+        repeated = "用户明确重复了一段足够长的真实消息，不能因为它与临时上下文相同就被去重。"
+        request = _normalize_request_input_details(repeated, [])
+
+        self.assertFalse(
+            _extras_are_already_assembled(
+                request, [{"type": "text", "text": repeated}]
+            )
+        )
+
     def test_request_route_is_bounded_and_non_sensitive(self):
         self.assertEqual(
             _request_route(

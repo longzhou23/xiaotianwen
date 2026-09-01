@@ -424,6 +424,44 @@ class ServiceStreamingTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 await service.close()
 
+    async def test_transport_forwards_direct_provider_extras_once_and_keeps_cache_family(self):
+        first_dynamic = "[Iris L2] first synthetic dynamic block"
+        second_dynamic = "[Iris L2] changed user, time, affection and memory block"
+        tools = [
+            {"type": "function", "name": "lookup", "parameters": {"type": "object"}}
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            service = CodexService(
+                Path(directory), {"backend_mode": "transport", "turn_timeout": 30}
+            )
+            fake = FakeTransport()
+            service.transport = fake
+            try:
+                for index, dynamic in enumerate((first_dynamic, second_dynamic), start=1):
+                    async for _ in service.stream_turn(
+                        session_key=f"direct-{index}",
+                        prompt="同一条稳定用户请求",
+                        contexts=[],
+                        extra_user_content_parts=[{"type": "text", "text": dynamic}],
+                        extra_parts_already_assembled=False,
+                        system_prompt="stable persona",
+                        model="gpt-test",
+                        tools=tools,
+                        request_route="chat",
+                    ):
+                        pass
+
+                first, second = fake.calls
+                for call, dynamic in zip((first, second), (first_dynamic, second_dynamic)):
+                    encoded = json.dumps(call["input_items"], ensure_ascii=False)
+                    self.assertEqual(encoded.count(dynamic), 1)
+                    self.assertIn("<astrbot_dynamic_context>", encoded)
+                    self.assertEqual(len(call["tools"]), 1)
+                self.assertEqual(first["prompt_cache_key"], second["prompt_cache_key"])
+                self.assertEqual(first["instructions"], second["instructions"])
+            finally:
+                await service.close()
+
     async def test_transport_uses_route_specific_effort_and_output_budget(self):
         with tempfile.TemporaryDirectory() as directory:
             service = CodexService(

@@ -96,6 +96,25 @@ def test_assembler_deduplicates_sources_and_applies_total_budget_after_prefix() 
     assert result.overflow_chars == 0
 
 
+def test_main_dynamic_sections_are_each_emitted_at_most_once() -> None:
+    sources = ("context_aware", "iris_l2", "iris_l3", "iris_profile", "iris_affection", "image_context_pool")
+    sections = tuple(
+        section
+        for source in sources
+        for section in (
+            _section(source, 40, f"{source}-authoritative"),
+            _section(source, 41, f"{source}-duplicate"),
+        )
+    )
+
+    result = ContextAssembler().assemble(sections)
+
+    emitted = [section.source for section in result.sections]
+    assert emitted == list(sources)
+    assert all(emitted.count(source) == 1 for source in sources)
+    assert all((source, "duplicate_source") in result.dropped for source in sources)
+
+
 def test_decision_route_excludes_main_reply_iris_and_tool_sections() -> None:
     result = ContextAssembler().assemble(
         (

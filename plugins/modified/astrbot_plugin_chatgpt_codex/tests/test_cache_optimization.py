@@ -71,6 +71,18 @@ class CacheOptimizationTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
+    def test_main_decision_proactive_and_vision_have_distinct_cache_families(self):
+        common = dict(
+            model="gpt-test",
+            instructions="stable persona",
+            tools=[{"type": "function", "name": "lookup", "parameters": {}}],
+        )
+        keys = {
+            self.service._transport_cache_key(request_route=route, **common)
+            for route in ("chat", "decision", "proactive", "vision")
+        }
+        self.assertEqual(len(keys), 4)
+
     async def test_active_thread_is_reused_without_repeated_resume(self):
         calls = []
 
