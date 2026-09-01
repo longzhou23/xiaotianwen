@@ -4,6 +4,15 @@
   let activeRun = null;
   const byId = (id) => document.getElementById(id);
   const show = (id, value) => { byId(id).textContent = JSON.stringify(value, null, 2); };
+  const updateConnection = (body) => {
+    const status = body.status || "NOT_CONNECTED";
+    const capture = body.capture_mode || "NOT_CONNECTED";
+    const instance = body.instance || "local AstrBot";
+    const bridge = body.onebot_bridge;
+    const bridgeText = bridge ? ` · OneBot bridge=${bridge.status || "NOT_CONNECTED"}` : "";
+    byId("connection").textContent = `P0/Fake 或本地 AstrBot 测试台 · AstrBot(${instance}): ${status} · capture=${capture}${bridgeText}`;
+    show("astrbot-status", body);
+  };
   const request = async (path, method = "GET", payload = null) => {
     const headers = { "Accept": "application/json" };
     if (method !== "GET") {
@@ -22,8 +31,18 @@
     show("requests", await request(`${base}/requests`));
     show("outputs", await request(`${base}/outputs`));
     show("timeline", await request(`${base}/timeline`));
+    show("logs", await request(`${base}/logs`));
     show("compare", await request(`${base}/compare`));
   };
+  const refreshAstrBot = async () => {
+    try {
+      updateConnection(await request("/api/astrbot"));
+    } catch (error) {
+      byId("connection").textContent = `Local Test Console 正常；AstrBot 连接检查失败：${String(error)}`;
+      byId("astrbot-status").textContent = String(error);
+    }
+  };
+  byId("refresh-astrbot").addEventListener("click", refreshAstrBot);
   byId("new-run").addEventListener("click", async () => {
     try {
       const body = await request("/api/runs", "POST", {});
@@ -40,7 +59,7 @@
       }
       const messages = byId("input").value.split(/\n\s*\n/).filter((text) => text.length > 0).map((text, index) => ({ text, at_ms: index * 1000 }));
       const images = byId("image").checked ? [{ id: "synthetic-ui-image-001", mime: "image/jpeg" }] : [];
-      const body = await request(`/api/runs/${encodeURIComponent(activeRun)}/inputs`, "POST", { route: byId("route").value, provider: byId("provider").value, template: byId("template").value, messages, images });
+      const body = await request(`/api/runs/${encodeURIComponent(activeRun)}/inputs`, "POST", { execution: byId("execution").value, route: byId("route").value, provider: byId("provider").value, template: byId("template").value, messages, images });
       byId("run-status").textContent = `${body.run.status} · capture=${body.capture_mode} · ${body.note}`;
       await refresh();
     } catch (error) { byId("run-status").textContent = String(error); }
@@ -53,5 +72,7 @@
       await refresh();
     } catch (error) { byId("run-status").textContent = String(error); }
   });
+  refreshAstrBot();
   refresh().catch((error) => { byId("run-status").textContent = String(error); });
+  window.setInterval(refreshAstrBot, 5000);
 })();

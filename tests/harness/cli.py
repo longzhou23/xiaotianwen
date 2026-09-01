@@ -335,6 +335,13 @@ def _execute_ui(args: argparse.Namespace) -> int:
         port=getattr(args, "port", 0),
         open_browser=getattr(args, "open_browser", True),
         duration_seconds=getattr(args, "duration_seconds", None),
+        astrbot_url=getattr(args, "astrbot_url", None),
+        astrbot_data_dir=getattr(args, "astrbot_data_dir", None),
+        live_astrbot=getattr(args, "live_astrbot", False),
+        onebot_ws_url=getattr(args, "onebot_ws_url", None),
+        onebot_token=getattr(args, "onebot_token", None),
+        onebot_self_id=getattr(args, "onebot_self_id", "1000000001"),
+        live_timeout_seconds=getattr(args, "live_timeout_seconds", 45.0),
     )
 
 
@@ -378,6 +385,13 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--open", dest="open_browser", action="store_true", default=True)
     ui.add_argument("--no-open", dest="open_browser", action="store_false")
     ui.add_argument("--duration-seconds", type=float, default=None, help="test-only automatic shutdown; omitted means serve until Ctrl+C")
+    ui.add_argument("--astrbot-url", help="loopback AstrBot Dashboard URL; defaults to the local xtw test instance")
+    ui.add_argument("--astrbot-data-dir", help="AstrBot data directory for the read-only local observer")
+    ui.add_argument("--live-astrbot", action="store_true", help="enable the explicit local OneBot bridge and route selected inputs into AstrBot")
+    ui.add_argument("--onebot-ws-url", help="loopback AstrBot reverse WebSocket URL; otherwise read it from --astrbot-data-dir")
+    ui.add_argument("--onebot-token", help="local test-only reverse WebSocket token; otherwise read it from --astrbot-data-dir")
+    ui.add_argument("--onebot-self-id", default="1000000001", help="synthetic numeric OneBot self ID")
+    ui.add_argument("--live-timeout-seconds", type=float, default=45.0, help="bounded wait for a local AstrBot action")
     ui.set_defaults(handler=_execute_ui)
     return parser
 

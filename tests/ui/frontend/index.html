@@ -10,7 +10,7 @@
   <body>
     <header>
       <h1>小天文本地测试台</h1>
-      <p id="connection">P0 离线内存 Harness · Fake OneBot / Provider: Capture COMPLETE · AstrBot: NOT_CONNECTED</p>
+      <p id="connection">P0 离线内存 Harness · Fake OneBot / Provider · AstrBot: 正在检查本机只读连接…</p>
     </header>
     <main>
       <section class="panel composer">
@@ -18,7 +18,10 @@
         <label>Route
           <select id="route"><option value="private">private</option><option value="group_passive">group_passive</option><option value="group_proactive">group_proactive</option></select>
         </label>
-        <label>Fake Provider
+        <label>执行路径
+          <select id="execution"><option value="fake" {{FAKE_EXECUTION_SELECTED}}>Fake harness（离线）</option><option value="astrbot" {{ASTRBOT_EXECUTION_SELECTED}}>本地 AstrBot（测试台替代 SnowLuma）</option></select>
+        </label>
+        <label>Fake Provider（仅 Fake 路径）
           <select id="provider"><option value="final">普通完成</option><option value="stream">流式</option><option value="tool">工具调用</option><option value="timeout">超时</option><option value="cancel">取消</option><option value="error">错误</option></select>
         </label>
         <label>Event Template
@@ -27,7 +30,12 @@
         <label>消息（多条以空行分隔）<textarea id="input" rows="8" placeholder="输入合成测试文本；仅当前本地浏览器会话保留完整原文。"></textarea></label>
         <label><input id="image" type="checkbox"> 添加一张合成图片描述</label>
         <div class="buttons"><button id="new-run">新建 Run</button><button id="send">发送测试</button><button id="cancel">取消 Run</button></div>
-        <p id="run-status">尚未创建 Run。未连接生产 AstrBot，不会把未知请求显示为 0。</p>
+        <p id="run-status">尚未创建 Run。选择本地 AstrBot 路径后，输入会经过测试台发送给隔离实例，output 只会回收到测试台。</p>
+      </section>
+      <section class="panel">
+        <h2>AstrBot Connection</h2>
+        <button id="refresh-astrbot" type="button">刷新本机连接</button>
+        <pre id="astrbot-status">正在检查本机 AstrBot Dashboard 和脱敏日志…</pre>
       </section>
       <section class="panel">
         <h2>Runs / Request Explorer</h2>
@@ -40,7 +48,10 @@
       </section>
       <section class="panel wide">
         <h2>AstrBot / Harness Logs & Timeline</h2>
-        <pre id="timeline">P0 仅显示 Harness/Fake 日志；AstrBot 未连接时明确标记。</pre>
+        <h3>Timeline</h3>
+        <pre id="timeline">P0 仅显示 Harness/Fake timeline；AstrBot 未连接时明确标记。</pre>
+        <h3>Harness logs for the selected Run</h3>
+        <pre id="logs">等待测试输入。</pre>
       </section>
       <section class="panel wide">
         <h2>Compare</h2>

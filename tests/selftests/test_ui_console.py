@@ -12,7 +12,7 @@ from urllib.request import HTTPCookieProcessor, Request, build_opener
 
 import pytest
 
-from tests.ui.server.app import ConsoleRequestError, create_console_server
+from tests.ui.server.app import ConsoleRequestError, LocalTestConsole, create_console_server
 
 
 def _request(opener: object, url: str, *, method: str = "GET", payload: object | None = None, csrf: str | None = None) -> tuple[int, str]:
@@ -116,3 +116,17 @@ def test_console_rejects_missing_csrf(console: tuple[str, object]) -> None:
     with pytest.raises(HTTPError) as caught:
         opener.open(request, timeout=3)
     assert caught.value.code == 403
+
+
+def test_live_error_action_is_not_reported_as_pass() -> None:
+    output = {
+        "payload": {
+            "message": [
+                {"type": "text", "data": {"text": "LLM 响应错误: All chat models failed: synthetic"}},
+            ]
+        }
+    }
+    assert LocalTestConsole._live_output_error(output) is not None
+    assert LocalTestConsole._live_output_error(
+        {"payload": {"message": [{"type": "text", "data": {"text": "正常测试回复"}}]}}
+    ) is None

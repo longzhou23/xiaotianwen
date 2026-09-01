@@ -1,7 +1,8 @@
 :root { color-scheme: dark; font-family: system-ui, "Microsoft YaHei", sans-serif; background: #111827; color: #e5e7eb; }
 body { margin: 0; background: #111827; }
 header { padding: 1rem 1.5rem; background: #172554; border-bottom: 1px solid #334155; }
-h1, h2 { margin: 0 0 .65rem; }
+h1, h2, h3 { margin: 0 0 .65rem; }
+h3 { margin-top: .9rem; font-size: .95rem; color: #bfdbfe; }
 header p { margin: 0; color: #bfdbfe; }
 main { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; padding: 1rem; }
 .panel { min-width: 0; padding: 1rem; border: 1px solid #334155; border-radius: .75rem; background: #1e293b; }
