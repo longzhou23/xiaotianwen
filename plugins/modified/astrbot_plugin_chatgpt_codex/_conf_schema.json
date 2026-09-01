@@ -39,11 +39,13 @@
   "route_reasoning_effort": {
     "type": "object",
     "description": "按 agent/chat/decision/proactive/vision/background 路由覆盖推理强度；未填写时使用全局 reasoning_effort。",
+    "items": {},
     "default": {}
   },
   "route_max_output_tokens": {
     "type": "object",
     "description": "按路由限制最大输出 token（256-32768）；未填写表示不额外限制。",
+    "items": {},
     "default": {}
   },
   "max_tool_result_chars": {
