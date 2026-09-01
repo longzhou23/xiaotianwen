@@ -1,0 +1,36 @@
+{
+	# Public TLS is terminated by Cloudflare. The internal origin certificate
+	# avoids ACME challenges being intercepted by the existing Access app.
+	admin off
+}
+
+(common_headers) {
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	encode gzip
+}
+
+# Cloudflare DNS records should be proxied to this server. Apply Cloudflare
+# Access policies to these hostnames before exposing the DNS records publicly.
+# Caddy preserves WebSocket upgrades for AstrBot, SnowLuma and noVNC.
+
+astrbot.longzh.top {
+	import common_headers
+	tls internal
+	reverse_proxy astrbot:6200
+}
+
+snowluma.longzh.top {
+	import common_headers
+	tls internal
+	reverse_proxy snowluma:5099
+}
+
+novnc.longzh.top {
+	import common_headers
+	tls internal
+	reverse_proxy snowluma:6081
+}

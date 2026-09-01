@@ -1,0 +1,19 @@
+services:
+  gateway:
+    image: caddy:2-alpine
+    container_name: xiaotianwen-gateway
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data:/data
+      - ./config:/config
+    networks:
+      - astrbot
+
+networks:
+  astrbot:
+    external: true
+    name: xiaotianwen-astrbot_default

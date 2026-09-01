@@ -964,6 +964,21 @@ Programmatic Tool Calling：
 - [x] P1：建立隔离 Fake OneBot/Fake Provider 实例并验证请求 observation、取消、tool continuation、`NOT_CONNECTED` 和安全边界；真实 AstrBot 插件发现/Hook 顺序仍未验证。
 - [x] P2：提供性能趋势计算、长时 Shadow/Canary 和 24/72 小时观测模板；实际长时观测尚未运行。
 
+### 9.0.1 私有实例本地测试接线状态（2026-09-01）
+
+- [x] 启动前完成私有实例数据备份；测试过程不覆盖 SnowLuma 数据库、知识库、插件数据、会话、使用记录、secrets 或 Git 历史。
+- [x] 将原私有 AstrBot 实例作为本地测试对象启动，WebUI 使用 `127.0.0.1:6399`，测试 OneBot 反向连接使用 `127.0.0.1:6403`。
+- [x] Local Test Console 通过 loopback-only OneBot bridge 连接真实 AstrBot，完成合成私聊事件发送、AstrBot action 捕获和 output 展示；该输出标记 `sent_to_qq=false`，未触达真实 QQ。
+- [x] 将测试事件白名单收敛为完整 session ID，验证合成事件能够进入 AstrBot Provider 链路。
+- [x] 确认 Codex 浏览器登录态文件已经写入私有实例的隔离 `CODEX_HOME`；未读取或记录 token、Cookie、OAuth 回调参数和其他登录凭据。
+- [x] 验证 Codex 插件设置页可以通过 `#/plugin-page/astrbot_plugin_chatgpt_codex/settings` 正常打开；账号概览 iframe 曾出现空白，设置路由本身可正常渲染。
+- [x] 定位当前 Provider 阻塞为出站网络问题：AstrBot 直连 `chatgpt.com` 超时并产生 `WinError 10060`；不再把该错误归类为 WebUI、OneBot 或登录密码故障。
+- [x] 只读验证当前主机代理路径能够到达 Codex endpoint；无凭据探测返回 HTTP 401，证明网络路径可达但不构成已认证 Provider 验收。
+- [ ] 为 AstrBot 配置可访问且不含凭据的显式 `transport_proxy`，保存后确认设置已热更新或按提示重启测试实例。
+- [ ] 代理生效后验证账号状态、模型列表、5 小时配额和一次合成消息 Provider 输出；日志不得再出现 `WinError 10060` 或 `Codex transport 网络请求失败`。
+- [ ] 复现并修复账号概览 iframe 的偶发空白；设置页可打开不能代替概览页加载验收。
+- [ ] 真实 QQ、SnowLuma、群聊、图片、Iris、工具调用、Shadow 24 小时和 Canary 100 Turn 仍为 `NOT_RUN` / `NOT_VERIFIED`，不得由本次 loopback 测试推断通过。
+
 P0 完整 profile 当前正确结论为 `NOT VERIFIED`：23 条功能回放与 20 条注入回放全部通过，
 Astrmetry、Iris Memory、Stealer 按隔离策略报告 `NOT_RUN`；AstrBot 4.27.4 实体适配已在
 独立环境单测，但不等同于真实生产 Provider/Hook 链路。这不是生产链路验收结论。

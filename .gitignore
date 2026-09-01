@@ -23,6 +23,7 @@ __pycache__/
 artifacts/test-runs/
 
 # local AstrBot instance data
+data/
 astrobot/data/config/
 astrobot/data/plugin_data/
 astrobot/data/knowledge_base/
