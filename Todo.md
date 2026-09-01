@@ -494,9 +494,9 @@ ToolExecutionPolicy(
 - [x] 输出当前启用插件的 Hook 清单：函数、生命周期、priority、读取字段、写入字段、是否阻断和副作用（AST 清单 + P2 HookContract；启用状态/运行顺序仍待实例）。
 - [x] 单独列出插件内部的 `text_chat()`、`llm_generate()`、`request_llm()` 调用（静态 AST 清单）。
 - [x] 区分主回复、decision、proactive judge、VLM、Iris background、compress 和其他 route（静态调用清单 + route policy；真实调用归类仍待实例）。
-- [ ] 查明 Debounce 与 Recall Cancel 的当前执行顺序和共享状态。
-- [ ] 查明 Group Chat Plus 当前 `priority=-100000` 收束逻辑的全部字段恢复行为。
-- [ ] 查明 AntiPromptInjector 前置/最终检查与 Output Audit 的实际边界。
+- [x] 查明 Debounce 与 Recall Cancel 的当前执行顺序和共享状态：AstrBot 按 priority 降序、同 priority 保留注册顺序；两者均为 `100`，没有共享插件内状态或请求字段写入，只通过 event stop 与平台生命周期相交；真实同时 recall/new-message 竞态仍归入实例回放门禁。
+- [x] 查明 Group Chat Plus 当前 `priority=-100000` 收束逻辑的全部字段恢复行为：机器审计覆盖 `prompt/system_prompt/contexts/extra_user_content_parts/image_urls/audio_urls/func_tool` 和本轮 extra 清理，见 `docs/HOOK_ORDER.md`；值级行为仍由真实 ProviderRequest 回放验收。
+- [x] 查明 AntiPromptInjector 前置/最终检查与 Output Audit 的实际边界：AntiPromptInjector 仅在请求侧且可直接拒绝发送；其 `999` “最终检查”按降序规则实际不是链尾。Output Audit 在 `90` 禁流并于 `-90` 修改完整候选且不直发。P2 仍需迁移直接拒绝发送，不能把本项勾选理解为生产安全链已收敛。
 - [x] 为 hook 顺序和字段所有权生成 `docs/HOOK_ORDER.md` 或机器可读 manifest。
 - [x] 插件升级后自动检测新 Hook、priority 漂移和新增默认 priority（`audit` profile 对 baseline fingerprint 做漂移阻断）。
 

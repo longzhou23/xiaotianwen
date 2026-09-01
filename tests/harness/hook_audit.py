@@ -20,7 +20,7 @@ HOOK_DECORATORS = {
     "platform_adapter_type",
 }
 LLM_CALLS = {"text_chat", "text_chat_stream", "llm_generate", "request_llm"}
-HOOK_MANIFEST_SCHEMA_VERSION = 1
+HOOK_MANIFEST_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +55,42 @@ class LlmCallAuditRecord:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class HookEffectAuditRecord:
+    """Structural field/side-effect inventory for one declared hook.
+
+    Values are field names and event-extra keys only.  The audit never records
+    request values, message text, persona content, memory or tool arguments.
+    """
+
+    path: str
+    function: str
+    decorator: str
+    priority: str
+    request_reads: tuple[str, ...]
+    request_writes: tuple[str, ...]
+    event_extra_reads: tuple[str, ...]
+    event_extra_writes: tuple[str, ...]
+    stops_event: bool
+    sends_directly: bool
+    replaces_result: bool
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "path": self.path,
+            "function": self.function,
+            "decorator": self.decorator,
+            "priority": self.priority,
+            "request_reads": list(self.request_reads),
+            "request_writes": list(self.request_writes),
+            "event_extra_reads": list(self.event_extra_reads),
+            "event_extra_writes": list(self.event_extra_writes),
+            "stops_event": self.stops_event,
+            "sends_directly": self.sends_directly,
+            "replaces_result": self.replaces_result,
+        }
+
+
 def _decorator_name(value: ast.expr) -> str | None:
     if isinstance(value, ast.Call):
         return _decorator_name(value.func)
@@ -71,10 +107,116 @@ def _priority(value: ast.expr) -> str:
     for keyword in value.keywords:
         if keyword.arg != "priority":
             continue
-        if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, int):
-            return str(keyword.value.value)
+        try:
+            literal = ast.literal_eval(keyword.value)
+        except (ValueError, TypeError):
+            literal = None
+        if isinstance(literal, int) and not isinstance(literal, bool):
+            return str(literal)
         return "dynamic"
     return "default"
+
+
+def _root_attribute(value: ast.Attribute, names: set[str]) -> str | None:
+    """Return the first field below a selected root name."""
+
+    parts: list[str] = []
+    current: ast.expr = value
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name) and current.id in names and parts:
+        return parts[-1]
+    return None
+
+
+def _constant_string_arg(call: ast.Call, index: int = 0) -> str | None:
+    if len(call.args) <= index:
+        return None
+    value = call.args[index]
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    return None
+
+
+def _hook_effect(
+    relative: str,
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    decorator: ast.expr,
+) -> HookEffectAuditRecord:
+    argument_names = {argument.arg for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)}
+    request_names = argument_names & {"req", "request"}
+    event_names = argument_names & {"event"}
+    request_reads: set[str] = set()
+    request_writes: set[str] = set()
+    extra_reads: set[str] = set()
+    extra_writes: set[str] = set()
+    stops_event = False
+    sends_directly = False
+    replaces_result = False
+
+    for child in ast.walk(node):
+        if isinstance(child, ast.AugAssign) and isinstance(child.target, ast.Attribute):
+            field = _root_attribute(child.target, request_names)
+            if field:
+                request_reads.add(field)
+                request_writes.add(field)
+        if isinstance(child, ast.Attribute):
+            field = _root_attribute(child, request_names)
+            if field:
+                if isinstance(child.ctx, ast.Store):
+                    request_writes.add(field)
+                elif isinstance(child.ctx, ast.Load):
+                    request_reads.add(field)
+        if not isinstance(child, ast.Call):
+            continue
+        if isinstance(child.func, ast.Name):
+            if child.func.id == "_request_stop_event" and child.args and isinstance(child.args[0], ast.Name) and child.args[0].id in event_names:
+                stops_event = True
+            if child.func.id == "_replace_plain_text":
+                replaces_result = True
+            continue
+        if not isinstance(child.func, ast.Attribute):
+            continue
+        if child.func.attr == "_replace_plain_text":
+            replaces_result = True
+        if (
+            child.func.attr == "_request_stop_event"
+            and child.args
+            and isinstance(child.args[0], ast.Name)
+            and child.args[0].id in event_names
+        ):
+            stops_event = True
+        owner = child.func.value
+        if isinstance(owner, ast.Name) and owner.id in event_names:
+            if child.func.attr == "get_extra":
+                key = _constant_string_arg(child)
+                if key:
+                    extra_reads.add(key)
+            elif child.func.attr == "set_extra":
+                key = _constant_string_arg(child)
+                if key:
+                    extra_writes.add(key)
+            elif child.func.attr == "stop_event":
+                stops_event = True
+            elif child.func.attr == "send":
+                sends_directly = True
+            elif child.func.attr == "set_result":
+                replaces_result = True
+
+    return HookEffectAuditRecord(
+        path=relative,
+        function=node.name,
+        decorator=_decorator_name(decorator) or "unknown",
+        priority=_priority(decorator),
+        request_reads=tuple(sorted(request_reads)),
+        request_writes=tuple(sorted(request_writes)),
+        event_extra_reads=tuple(sorted(extra_reads)),
+        event_extra_writes=tuple(sorted(extra_writes)),
+        stops_event=stops_event,
+        sends_directly=sends_directly,
+        replaces_result=replaces_result,
+    )
 
 
 def scan_plugins(repository_root: Path) -> tuple[tuple[HookAuditRecord, ...], tuple[LlmCallAuditRecord, ...]]:
@@ -107,14 +249,38 @@ def scan_plugins(repository_root: Path) -> tuple[tuple[HookAuditRecord, ...], tu
     return tuple(hooks), tuple(calls)
 
 
+def scan_hook_effects(repository_root: Path) -> tuple[HookEffectAuditRecord, ...]:
+    """Scan hook request fields and event side effects without importing code."""
+
+    plugin_root = repository_root / "plugins"
+    effects: list[HookEffectAuditRecord] = []
+    for path in sorted(plugin_root.rglob("*.py")):
+        if "tests" in path.parts or "__pycache__" in path.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, SyntaxError):
+            continue
+        relative = path.relative_to(repository_root).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if _decorator_name(decorator) in HOOK_DECORATORS:
+                    effects.append(_hook_effect(relative, node, decorator))
+    return tuple(effects)
+
+
 def build_manifest(repository_root: Path) -> dict[str, object]:
     """Build a JSON-safe static inventory and stable drift fingerprint."""
 
     hooks, calls = scan_plugins(repository_root)
+    effects = scan_hook_effects(repository_root)
     hook_values = [item.to_dict() for item in hooks]
     call_values = [item.to_dict() for item in calls]
+    effect_values = [item.to_dict() for item in effects]
     canonical = json.dumps(
-        {"hooks": hook_values, "llm_calls": call_values},
+        {"hooks": hook_values, "hook_effects": effect_values, "llm_calls": call_values},
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -122,9 +288,11 @@ def build_manifest(repository_root: Path) -> dict[str, object]:
     return {
         "schema_version": HOOK_MANIFEST_SCHEMA_VERSION,
         "hook_count": len(hook_values),
+        "hook_effect_count": len(effect_values),
         "llm_call_count": len(call_values),
         "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
         "hooks": hook_values,
+        "hook_effects": effect_values,
         "llm_calls": call_values,
     }
 
@@ -152,7 +320,7 @@ def compare_manifest(current: dict[str, object], baseline: dict[str, object]) ->
             "hook audit fingerprint changed: "
             f"expected {baseline.get('fingerprint')}, got {current.get('fingerprint')}"
         )
-    for key in ("hook_count", "llm_call_count"):
+    for key in ("hook_count", "hook_effect_count", "llm_call_count"):
         if key in baseline and current.get(key) != baseline.get(key):
             errors.append(f"{key} changed: expected {baseline.get(key)}, got {current.get(key)}")
     return tuple(errors)
