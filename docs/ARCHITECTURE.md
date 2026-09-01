@@ -1,6 +1,6 @@
 # 小天文项目架构文档
 
-> 文档版本：v1.0（2026-08-26）
+> 文档版本：v2.0（2026-09-02）
 > 适用范围：`xiaotianwen` 公共代码仓库、私有实例数据、Ubuntu/Docker 运行环境以及 QQ-AstrBot 处理链路
 > 文档性质：当前实现的架构基线，同时记录迁移和演进约束
 
@@ -171,6 +171,8 @@ AstrBot Compose 使用 `soulter/astrbot:latest`，SnowLuma Compose 使用 `motri
 
 ## 6. AstrBot 消息处理管线
 
+### 6.1 当前生产兼容链
+
 以下是逻辑顺序。具体执行顺序由 AstrBot 事件类型、插件优先级和当前配置共同决定，不能仅凭日志中出现顺序推断所有调用细节。
 
 ```text
@@ -206,7 +208,29 @@ AstrBot Compose 使用 `soulter/astrbot:latest`，SnowLuma Compose 使用 `motri
 10. SnowLuma 发送消息、图片或文件回 QQ
 ```
 
-### 6.1 防重复请求原则
+### 6.2 新编排链与切换状态
+
+`astrbot_plugin_xiaotianwen_orchestrator` 已实现统一契约、Turn Coordinator、Context Assembler、媒体注册、request owner、delivery 幂等、安全边界和结构化观测，但当前私有实例锁定为 `enabled: false`。它是可部署的影子/灰度候选，不是已经接管生产的事实。
+
+```text
+OneBot event
+  -> TurnEnvelope（稳定 event/request/media ID）
+  -> Turn Coordinator（3 秒静默窗、去重、取消、owner）
+  -> Context Provider Registry
+       ├─ ContextAware scene
+       ├─ Iris L1/L2/L3/profile/affection
+       ├─ ImageContextPool media registry
+       └─ stable persona/tool rules
+  -> Context Assembler（按 route、预算、source 去重）
+  -> Provider route（chat/decision/proactive/vision）
+  -> Tool policy（read single-flight；send/write 串行幂等）
+  -> Output Audit
+  -> Delivery owner（每 request 最多一次最终发送）
+```
+
+切换顺序固定为 `disabled -> shadow -> canary -> active`。Shadow 不创建额外模型或发送请求；Canary 只允许明确的测试私聊/测试群；active 前必须通过 24 小时 Shadow、100 Turn Canary、真实图片/表情包/星图/主动聊天矩阵和回滚演练。Group Chat Plus 兼容链在上述门禁前继续保留，旧 manager 也不得提前删除。
+
+### 6.3 防重复请求原则
 
 一次用户意图应只产生一个主回复请求。防抖负责聚合短时间到达的消息；取消回复负责在新消息到达时终止旧请求；图片/文字事件不能各自独立触发一份主回复。任何新增插件若会调用 LLM，必须明确它是“主回复”“预判断”“记忆后台任务”还是“工具调用”，并设置独立会话键和幂等标识。
 
@@ -218,6 +242,7 @@ AstrBot Compose 使用 `soulter/astrbot:latest`，SnowLuma Compose 使用 `motri
 |---|---|---|
 | AstrBot | 事件总线、Provider、工具循环、管理面板、响应管线 | QQ 协议细节和实例人格内容 |
 | ContextAware（modified） | 当前群聊场景、发言关系、触发判断、图片媒体识别、按需 VLM 描述 | L2/L3 长期记忆和主动聊天人格学习 |
+| Xiaotianwen Orchestrator（modified，默认关闭） | 统一 Turn/Context/Media/Tool/Delivery 契约，shadow/canary/active 所有权与结构化观测 | 未经门禁直接替代 Group Chat Plus，或自行读取/修改私有数据库 |
 | Group Chat Plus（modified） | 群聊触发概率、消息聚合、40 条主上下文限制、工具提醒、私聊跨群意图转发 | 作为唯一图片理解器；其内置图片处理已关闭 |
 | Shared Context | 跨会话共享上下文 | 当前不主动做文件/多模态解析，不替代 Iris |
 | AtTool | QQ `@` 相关的触发/辅助操作 | 不负责会话聚合、模型调用或权限绕过 |

@@ -795,10 +795,10 @@ Core 边界：
 - [ ] 删除前使用 `rg`、导入测试和运行 trace 确认无引用。
 - [x] 清理空的 `public/xiaotwen` 误拼写目录。
 - [x] 保留 NapCat 仅在历史归档，不重新加入运行链路。
-- [ ] 更新 `plugins.lock.yaml`，新增 Orchestrator 并标记退役插件。
+- [x] 更新私有 `plugins.lock.yaml`：新增 Orchestrator 且保持 `enabled: false`，NapCat 入口继续标记 `retired/enabled: false`。
 - [x] 更新部署、测试、Hook 顺序和 P1/P2 实现文档（新增 `docs/P1-P2-IMPLEMENTATION.md`）。
-- [ ] 按真实插件迁移结果重写 `docs/ARCHITECTURE.md` 的全量架构图和调用链。
-- [ ] 不删除数据库、图片池、表情包库和 Iris 数据。
+- [x] 按当前真实迁移边界更新 `docs/ARCHITECTURE.md`：区分生产兼容链、默认关闭的新编排链和切换门禁。
+- [x] 本轮只修改公共代码/文档和私有插件锁，不删除数据库、图片池、表情包库和 Iris 数据；完整私有工作树已在开工前归档。
 
 ### P2-5 修复并验证 Affection / 情绪更新链路
 
