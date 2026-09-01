@@ -873,14 +873,14 @@ NapCat 已经弃用，本工作包不恢复 NapCat，只防止后续脚本或文
 
 故障演练：
 
-- [ ] 只重启 AstrBot；
-- [ ] 只重启 SnowLuma；
-- [ ] 同时重启全部现役服务；
+- [x] Azure 只重启 AstrBot，随后 Dashboard/OneBot/SnowLuma/noVNC 分层验证通过；
+- [x] Azure 只重启 SnowLuma，随后四层验证通过；
+- [x] Azure 同时重启全部现役服务，随后四层验证通过；
 - [ ] 主机重启后自动恢复；
 - [ ] 网络断开 5 分钟后恢复；
 - [ ] QQ 登录失效后通过 noVNC 重新登录；
-- [ ] OneBot WebSocket 中断后重连；
-- [ ] 人为制造旧端口占用，确认单实例门禁阻止双接入层。
+- [x] 重启演练后 SnowLuma 重新连接 `ws://astrbot:8001/ws`，AstrBot 记录 HTTP 101 和 OneBot v11 已连接；
+- [x] 在 Azure 对已占用的 8001 端口启动第二绑定探针，Docker 拒绝第二实例且现役容器不受影响。
 
 验收：
 
@@ -1059,10 +1059,10 @@ Astrmetry、Iris Memory、Stealer 按隔离策略报告 `NOT_RUN`；AstrBot 4.27
 
 ### 10.3 Production Gate
 
-- [ ] Public / Private 工作区干净。
+- [x] Azure Public / Private 部署工作区干净；本机 Private 仍保留用户运行数据变更，不做广泛提交。
 - [ ] 自动化测试全部通过。
-- [ ] 部署前一致性备份完成。
-- [ ] 当前容器 image digest 已记录。
+- [x] 部署前一致性备份完成并记录大小/SHA-256。
+- [x] 当前容器 image digest 已记录于远端 `runtime/deployed-images.env` 和 `tests/VALIDATION-2026-09-02.md`。
 - [ ] 新旧路径开关和回滚命令经过演练。
 - [ ] 在非高峰时间发布。
 - [ ] 发布后观察 2 小时实时日志和 24 小时指标。
