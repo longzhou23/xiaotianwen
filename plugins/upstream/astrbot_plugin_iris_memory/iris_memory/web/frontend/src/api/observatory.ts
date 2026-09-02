@@ -19,13 +19,15 @@ export async function getObservatoryEpisodes(params: Record<string, any> = {}): 
 }
 
 export async function getObservatoryEpisode(id: string): Promise<any> {
-  const response = await apiGet<any>(`cognitive-observatory/episodes/${encodeURIComponent(id)}`)
+  // AstrBotPluginPage encodes each endpoint path segment.  Passing an already
+  // encoded ID would encode '%' again and change the EpisodeStore lookup key.
+  const response = await apiGet<any>(`cognitive-observatory/episodes/${id}`)
   ensure(response, '获取 Episode 详情失败')
   return response
 }
 
 export async function previewObservatoryReview(id: string): Promise<any> {
-  const response = await apiPost<any>(`cognitive-observatory/episodes/${encodeURIComponent(id)}/preview`, {})
+  const response = await apiPost<any>(`cognitive-observatory/episodes/${id}/preview`, {})
   ensure(response, '预览 Review 失败')
   return response
 }

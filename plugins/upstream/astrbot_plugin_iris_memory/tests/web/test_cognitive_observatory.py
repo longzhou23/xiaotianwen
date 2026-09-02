@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from urllib.parse import quote
 
 import pytest
 from quart import Quart
@@ -37,13 +39,28 @@ def _record(event_id: str = "event:1") -> BehaviorExecutionRecord:
     )
 
 
-def _fixture(*, outcome_kind: OutcomeKind | None = OutcomeKind.EXPLICIT_CORRECTION, late: bool = False):
+def _fixture(
+    *,
+    outcome_kind: OutcomeKind | None = OutcomeKind.EXPLICIT_CORRECTION,
+    late: bool = False,
+    episode_id: str = "episode:test:1",
+    state: EpisodeState = EpisodeState.FINALIZED,
+):
     record = _record()
     host_ref = EpisodeEventRef(
         f"HOST_OUTPUT:event:1:{record.trace.trace_id}", EpisodeEventKind.HOST_OUTPUT,
         "event:1", record.trace.trace_id, f"{record.trace.trace_id}:1", NOW,
     )
-    episode = Episode("episode:test:1", "test", EpisodeState.FINALIZED, "event:1", NOW, NOW, event_refs=(host_ref,), finalized_at=NOW)
+    episode = Episode(
+        episode_id,
+        "test",
+        state,
+        "event:1",
+        NOW,
+        NOW,
+        event_refs=(host_ref,),
+        finalized_at=NOW if state is EpisodeState.FINALIZED else None,
+    )
     store = InMemoryEpisodeStore(); store.create_episode(episode)
     outcomes = ()
     if outcome_kind:
@@ -115,6 +132,23 @@ def test_empty_and_unavailable_sources_do_not_raise():
     assert unavailable.list_episodes()["available"] is False
 
 
+def test_route_service_provider_reuses_current_runtime_episode_store(monkeypatch):
+    store, episode, _outcomes, _records = _fixture(state=EpisodeState.OPEN)
+    runtime = SimpleNamespace(
+        episode_observer=SimpleNamespace(store=store),
+        execution_observatory=None,
+    )
+    monkeypatch.setattr(routes, "get_cognitive_runtime", lambda: runtime)
+
+    list_service = routes.get_observatory_service()
+    detail_service = routes.get_observatory_service()
+
+    assert list_service._episode_store is store
+    assert detail_service._episode_store is store
+    assert list_service.list_episodes()["episodes"][0]["episode_id"] == episode.episode_id
+    assert detail_service.episode_detail(episode.episode_id)["episode"]["episode_id"] == episode.episode_id
+
+
 def test_demo_cases_are_memory_only_and_cover_rejected_unattached_fact():
     service = P1ObservatoryService()
     correction = service.demo_case("correction")
@@ -149,3 +183,50 @@ async def test_routes_return_json_and_error_statuses(monkeypatch):
     assert (await client.get("/astrbot_plugin_iris_memory/cognitive-observatory/episodes/missing")).status_code == 404
     preview = await (await client.post(f"/astrbot_plugin_iris_memory/cognitive-observatory/episodes/{episode.episode_id}/preview")).get_json()
     assert preview["success"] is True and preview["evidence_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_listed_open_episode_id_round_trips_through_encoded_route(monkeypatch):
+    episode_id = "episode:private:2986500364:runtime:136336110833632:标记 100%"
+    store, episode, _outcomes, records = _fixture(
+        episode_id=episode_id,
+        state=EpisodeState.OPEN,
+    )
+    service = P1ObservatoryService(store, execution_records=records)
+    episode_before = store.get_episode(episode_id)
+    outcomes_before = store.get_outcomes(episode_id)
+    monkeypatch.setattr(routes, "get_observatory_service", lambda: service)
+    context = _Context()
+    routes.register_observatory_routes(context)
+    app = Quart(__name__)
+    for path, handler, methods in context.routes:
+        app.add_url_rule(path, endpoint=path, view_func=handler, methods=methods)
+    client = app.test_client()
+
+    listing = await (
+        await client.get("/astrbot_plugin_iris_memory/cognitive-observatory/episodes")
+    ).get_json()
+    listed_id = listing["episodes"][0]["episode_id"]
+    assert listed_id == episode_id
+
+    encoded_id = quote(listed_id, safe="")
+    response = await client.get(
+        f"/astrbot_plugin_iris_memory/cognitive-observatory/episodes/{encoded_id}"
+    )
+    detail = await response.get_json()
+    assert response.status_code == 200
+    assert detail["episode"]["episode_id"] == listed_id
+    assert detail["episode"]["state"] == "OPEN"
+    assert detail["outcomes"][0]["target_episode_id"] == listed_id
+    assert detail["review"]["runs"] == []
+
+    preview_response = await client.post(
+        f"/astrbot_plugin_iris_memory/cognitive-observatory/episodes/{encoded_id}/preview"
+    )
+    preview = await preview_response.get_json()
+    assert preview_response.status_code == 200
+    assert preview["eligibility"]["decision"] == "DEFER"
+    assert preview["run"] is None
+    assert preview["evidence_count"] == 0
+    assert store.get_episode(episode_id) == episode_before
+    assert store.get_outcomes(episode_id) == outcomes_before
