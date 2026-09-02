@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
 
@@ -69,6 +70,44 @@ def _fixture(
     return store, episode, outcomes, {host_ref.ref_id: record}
 
 
+def _four_turn_fixture(*, state: EpisodeState = EpisodeState.OPEN, include_extra_event: bool = False):
+    refs: list[EpisodeEventRef] = []
+    records: dict[str, BehaviorExecutionRecord] = {}
+    for number in range(1, 5):
+        event_id = f"event:{number}"
+        record = _record(event_id)
+        refs.extend((
+            EpisodeEventRef(f"EXPERIENCE:{event_id}", EpisodeEventKind.EXPERIENCE, event_id, observed_at=NOW),
+            EpisodeEventRef(f"NO_INTENT:{event_id}:{record.trace.trace_id}", EpisodeEventKind.NO_INTENT, event_id, record.trace.trace_id, observed_at=NOW),
+            EpisodeEventRef(f"HOST_OUTPUT:{event_id}:{record.trace.trace_id}", EpisodeEventKind.HOST_OUTPUT, event_id, record.trace.trace_id, f"{record.trace.trace_id}:1", NOW),
+            EpisodeEventRef(f"DISPATCH:{event_id}:{record.trace.trace_id}", EpisodeEventKind.DISPATCH, event_id, record.trace.trace_id, f"{record.trace.trace_id}:2", NOW),
+        ))
+        records[refs[-2].ref_id] = record
+    if include_extra_event:
+        refs.append(EpisodeEventRef("TOOL_RESULT:event:extra", EpisodeEventKind.TOOL_RESULT, "event:extra", observed_at=NOW))
+    episode = Episode(
+        "episode:four-turns",
+        "private:test",
+        state,
+        "event:1",
+        NOW,
+        NOW,
+        event_refs=tuple(refs),
+        finalized_at=NOW if state is EpisodeState.FINALIZED else None,
+    )
+    store = InMemoryEpisodeStore(); store.create_episode(episode)
+    outcomes = tuple(
+        OutcomeObservation(
+            f"outcome:four-turns:{number}", episode.episode_id, OutcomeKind.DISPATCH_OBSERVED,
+            NOW, source_event_id=f"event:{number}", explicitness=OutcomeExplicitness.STRUCTURAL,
+        )
+        for number in range(1, 5)
+    )
+    for outcome in outcomes:
+        store.record_outcome(outcome)
+    return store, episode, outcomes, records
+
+
 def test_listing_detail_snapshot_and_late_outcome_are_read_only():
     store, episode, outcomes, records = _fixture(late=True)
     service = P1ObservatoryService(store, execution_records=records)
@@ -130,6 +169,45 @@ def test_empty_and_unavailable_sources_do_not_raise():
     unavailable = P1ObservatoryService()
     assert unavailable.summary()["available"] is False
     assert unavailable.list_episodes()["available"] is False
+
+
+def test_human_view_counts_actual_structural_refs_without_event_division():
+    store, episode, _outcomes, records = _four_turn_fixture(include_extra_event=True)
+    service = P1ObservatoryService(store, execution_records=records)
+    detail = service.episode_detail(episode.episode_id)
+    human = detail["human"]
+    assert len(episode.event_refs) == 17
+    assert human["interaction_turns"] == 4
+    assert human["host_outputs"] == 4
+    assert human["dispatches"] == 4
+    assert human["outcomes"] == 4
+    assert human["no_intent"] == 4
+    assert human["host_fact_integrity"] == "COMPLETE"
+    assert human["verified_host_facts"] == 4
+    assert service.list_episodes()["episodes"][0]["human"]["interaction_turns"] == 4
+
+
+def test_human_view_reports_unavailable_records_and_p1_review_gate_conservatively():
+    store, episode, _outcomes, _records = _four_turn_fixture(state=EpisodeState.INTERRUPTED)
+    human = P1ObservatoryService(store).episode_detail(episode.episode_id)["human"]
+    assert human["lifecycle_label"] == "运行中断"
+    assert human["host_fact_integrity"] == "PARTIAL"
+    assert human["verified_host_facts"] == 0
+    assert human["unavailable_host_facts"] == 4
+    assert human["review_storage"] == "NOT_WIRED"
+    assert human["promotion_enabled"] is False
+
+
+def test_human_view_keeps_engineering_raw_details_available_to_the_frontend():
+    store, episode, _outcomes, records = _four_turn_fixture()
+    detail = P1ObservatoryService(store, execution_records=records).episode_detail(episode.episode_id)
+    assert detail["raw"]["episode"]["event_refs"]
+    assert detail["snapshot"]["hash"]
+    view = Path(__file__).parents[2] / "iris_memory" / "web" / "frontend" / "src" / "views" / "CognitiveObservatoryView.vue"
+    source = view.read_text(encoding="utf-8")
+    assert "viewMode" in source
+    assert "工程视图" in source
+    assert "Raw JSON · read-only" in source
 
 
 def test_route_service_provider_reuses_current_runtime_episode_store(monkeypatch):

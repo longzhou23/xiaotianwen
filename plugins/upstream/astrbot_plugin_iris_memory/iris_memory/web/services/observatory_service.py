@@ -137,14 +137,18 @@ class P1ObservatoryService:
         outcomes = self._episode_store.get_outcomes(episode_id)  # type: ignore[union-attr]
         persisted = self._persisted_review(episode_id)
         snapshot = self.snapshot_debug_view(episode_id)
+        attachments = self._attachment_views(episode, outcomes)
         return {
             "available": True,
             "episode": self._episode_view(episode),
             "outcomes": [self._outcome_view(outcome, episode) for outcome in outcomes],
             "timeline": self._timeline(episode, outcomes, persisted),
-            "attachments": self._attachment_views(episode, outcomes),
+            "attachments": attachments,
             "review": persisted,
             "snapshot": snapshot,
+            # Pure read-model projection for the default human-readable view.
+            # It never becomes an Episode/Outcome/Review source of truth.
+            "human": self._human_detail(episode, outcomes, persisted, snapshot, attachments),
             "raw": {"episode": self._episode_view(episode), "outcomes": _json_value(outcomes), "review": persisted, "snapshot": snapshot},
         }
 
@@ -305,7 +309,81 @@ class P1ObservatoryService:
 
     @staticmethod
     def _episode_summary(episode: Episode, outcomes: tuple[OutcomeObservation, ...]) -> dict[str, Any]:
-        return {"episode_id": episode.episode_id, "state": episode.state.value, "root_event_id": episode.root_event_id, "opened_at": _timestamp(episode.opened_at), "last_activity_at": _timestamp(episode.last_activity_at), "finalized_at": _timestamp(episode.finalized_at), "event_count": len(episode.event_refs), "outcome_count": len(outcomes), "topic_hint_available": bool(episode.topic_hint)}
+        return {
+            "episode_id": episode.episode_id,
+            "state": episode.state.value,
+            "root_event_id": episode.root_event_id,
+            "opened_at": _timestamp(episode.opened_at),
+            "last_activity_at": _timestamp(episode.last_activity_at),
+            "finalized_at": _timestamp(episode.finalized_at),
+            "event_count": len(episode.event_refs),
+            "outcome_count": len(outcomes),
+            "topic_hint_available": bool(episode.topic_hint),
+            "human": P1ObservatoryService._human_counts(episode, outcomes),
+        }
+
+    @staticmethod
+    def _human_counts(episode: Episode, outcomes: tuple[OutcomeObservation, ...]) -> dict[str, Any]:
+        """Return structural, read-only counts; never infer turns by division."""
+        refs = episode.event_refs
+        return {
+            "lifecycle_label": {
+                EpisodeState.OPEN: "进行中",
+                EpisodeState.SOFT_CLOSED: "暂时结束，等待后续",
+                EpisodeState.FINALIZED: "已结束并封存",
+                EpisodeState.INTERRUPTED: "运行中断",
+            }[episode.state],
+            "interaction_turns": sum(ref.kind is EpisodeEventKind.EXPERIENCE for ref in refs),
+            "cognitive_decisions": sum(
+                ref.kind in {EpisodeEventKind.COGNITIVE_PROPOSAL, EpisodeEventKind.NO_INTENT}
+                for ref in refs
+            ),
+            "no_intent": sum(ref.kind is EpisodeEventKind.NO_INTENT for ref in refs),
+            "host_outputs": sum(ref.kind is EpisodeEventKind.HOST_OUTPUT for ref in refs),
+            "dispatches": sum(ref.kind is EpisodeEventKind.DISPATCH for ref in refs),
+            "outcomes": len(outcomes),
+        }
+
+    @classmethod
+    def _human_detail(
+        cls,
+        episode: Episode,
+        outcomes: tuple[OutcomeObservation, ...],
+        review: Mapping[str, Any],
+        snapshot: Mapping[str, Any],
+        attachments: list[Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        """Project operational facts into labels for the simple UI view only."""
+        counts = cls._human_counts(episode, outcomes)
+        host_attachments = [item for item in attachments if item.get("source_type") == EvidenceSourceType.HOST_RESULT.value]
+        verified = sum(item.get("status") == "ATTACHED" for item in host_attachments)
+        unavailable = sum(item.get("status") == "UNAVAILABLE" for item in host_attachments)
+        rejected = sum(item.get("status") == "REJECTED" for item in host_attachments)
+        host_total = counts["host_outputs"]
+        if host_total == 0:
+            host_integrity = "NO_HOST_OUTPUT"
+        elif verified == host_total:
+            host_integrity = "COMPLETE"
+        else:
+            host_integrity = "PARTIAL"
+        runs = review.get("runs", [])
+        return {
+            **counts,
+            "shadow_observation": True,
+            "host_fact_integrity": host_integrity,
+            "verified_host_facts": verified,
+            "unavailable_host_facts": unavailable,
+            "rejected_host_facts": rejected,
+            "snapshot_available": bool(snapshot.get("available")),
+            "snapshot_content_frozen": bool(snapshot.get("fact_deep_snapshotted")),
+            "snapshot_payload_hashed": bool(snapshot.get("fact_payload_hashed")),
+            "snapshot_attachment_enforced": snapshot.get("episode_attachment") == "ENFORCED",
+            "review_storage": "NOT_WIRED" if review.get("status") == "NOT_WIRED" else "AVAILABLE",
+            "review_status": review.get("status"),
+            "review_runs": len(runs),
+            "review_findings": sum(len(run.get("findings", [])) for run in runs),
+            "promotion_enabled": False,
+        }
 
     @staticmethod
     def _episode_view(episode: Episode) -> dict[str, Any]:
