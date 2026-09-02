@@ -92,6 +92,46 @@ def test_direct_self_question_is_new():
     assert decision.action is BoundaryAction.NEW
 
 
+def test_unique_open_private_continuation_attaches_without_reply():
+    assembler = EpisodeAssembler(_SELF)
+    episode = _episode(make_episode_id("private:1", "qq:root"), scope="private:1")
+    decision = assembler.decide(
+        _experience("qq:next", session_id="private:1", mode="private"),
+        active_episodes=(episode,),
+    )
+    assert decision.action is BoundaryAction.ATTACH
+    assert decision.episode_id == episode.episode_id
+    assert decision.reason == "private_continuation_unique_open"
+
+
+def test_multiple_open_private_continuations_remain_new():
+    assembler = EpisodeAssembler(_SELF)
+    episodes = (
+        _episode(make_episode_id("private:1", "qq:first"), scope="private:1"),
+        _episode(make_episode_id("private:1", "qq:second"), scope="private:1"),
+    )
+    decision = assembler.decide(
+        _experience("qq:next", session_id="private:1", mode="private"),
+        active_episodes=episodes,
+    )
+    assert decision.action is BoundaryAction.NEW
+
+
+def test_unresolved_private_reply_does_not_fall_back_to_unique_continuation():
+    assembler = EpisodeAssembler(_SELF)
+    episode = _episode(make_episode_id("private:1", "qq:root"), scope="private:1")
+    decision = assembler.decide(
+        _experience(
+            "qq:next",
+            session_id="private:1",
+            mode="private",
+            reply_event_id="qq:unknown",
+        ),
+        active_episodes=(episode,),
+    )
+    assert decision.action is BoundaryAction.NEW
+
+
 def test_reply_to_member_event_attaches_exact_episode():
     assembler = EpisodeAssembler(_SELF)
     ep = _episode(make_episode_id("g1", "qq:1"), topic_hint="望远镜")

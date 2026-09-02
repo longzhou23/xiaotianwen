@@ -14,6 +14,7 @@ from iris_memory.cognitive.episode import EpisodeEventKind
 from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
 from iris_memory.cognitive.episode_store import InMemoryEpisodeStore
 from iris_memory.cognitive.iris_adapter import CognitiveRuntime
+from iris_memory.web.services.observatory_service import P1ObservatoryService
 
 
 _NOW = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
@@ -69,3 +70,37 @@ def test_ambient_group_message_does_not_create_episode():
     runtime = CognitiveRuntime(episode_observer=observer)
     runtime.run_behavior(_exp("qq:ambient", "普通群聊", mode="casual_group_chat", session_id="g1"))
     assert store.all_episodes() == ()
+
+
+def test_three_private_turns_continue_in_one_episode_with_attached_host_records():
+    store = InMemoryEpisodeStore()
+    observer = EpisodeShadowObserver(store)
+    runtime = CognitiveRuntime(episode_observer=observer)
+
+    for sequence in range(1, 4):
+        proposal = runtime.run_behavior(
+            _exp(f"qq:{sequence}", f"private turn {sequence}", session_id="private:1")
+        )
+        host = runtime.observe_host_output(proposal, f"host output {sequence}", legacy_fallthrough=True)
+        runtime.observe_dispatch(host)
+
+    episodes = store.all_episodes()
+    assert len(episodes) == 1
+    episode = episodes[0]
+    assert len(episode.event_refs) == 12
+    assert sum(ref.kind is EpisodeEventKind.EXPERIENCE for ref in episode.event_refs) == 3
+    assert sum(ref.kind is EpisodeEventKind.NO_INTENT for ref in episode.event_refs) == 3
+    assert sum(ref.kind is EpisodeEventKind.HOST_OUTPUT for ref in episode.event_refs) == 3
+    assert sum(ref.kind is EpisodeEventKind.DISPATCH for ref in episode.event_refs) == 3
+    assert len(store.get_outcomes(episode.episode_id)) == 3
+
+    detail = P1ObservatoryService(
+        store, execution_observatory=runtime.execution_observatory
+    ).episode_detail(episode.episode_id)
+    host_attachments = [
+        attachment
+        for attachment in detail["attachments"]
+        if attachment["source_type"] == "HOST_RESULT"
+    ]
+    assert len(host_attachments) == 3
+    assert {attachment["status"] for attachment in host_attachments} == {"ATTACHED"}

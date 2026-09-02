@@ -99,6 +99,41 @@ def test_finalized_late_feedback_creates_current_episode_and_targets_old():
     assert OutcomeKind.EXPLICIT_CORRECTION in kinds
 
 
+def test_finalized_reply_is_not_hijacked_by_unique_open_private_episode():
+    store = InMemoryEpisodeStore()
+    observer = EpisodeShadowObserver(store)
+    runtime = CognitiveRuntime(episode_observer=observer)
+
+    runtime.run_behavior(_exp("qq:open", "当前私聊问题", session_id="private:1"))
+    open_episode = store.all_episodes()[0]
+    old = store.transition_state(open_episode.episode_id, EpisodeState.SOFT_CLOSED, reason="idle")
+    old = store.transition_state(old.episode_id, EpisodeState.FINALIZED, reason="grace")
+    runtime.run_behavior(_exp("qq:current", "新的当前问题", session_id="private:1"))
+    current_open = next(episode for episode in store.all_episodes() if episode.state is EpisodeState.OPEN)
+
+    runtime.run_behavior(
+        _exp(
+            "qq:feedback",
+            "你刚才那个不对",
+            reply_event_id="qq:open",
+            session_id="private:1",
+        )
+    )
+
+    assert store.get_episode(current_open.episode_id) == current_open
+    historical = store.get_episode(old.episode_id)
+    assert historical is not None and historical.state is EpisodeState.FINALIZED
+    assert OutcomeKind.EXPLICIT_CORRECTION in {
+        outcome.kind for outcome in store.get_outcomes(old.episode_id)
+    }
+    new_episodes = [
+        episode
+        for episode in store.all_episodes()
+        if episode.episode_id not in {old.episode_id, current_open.episode_id}
+    ]
+    assert len(new_episodes) == 1
+
+
 def test_orphan_outcome_is_rejected():
     store = InMemoryEpisodeStore()
     from iris_memory.cognitive.outcome import (
