@@ -8,7 +8,7 @@
 
 ```bash
 export PROJECT_ROOT="$HOME/xiaotianwen"
-export PUBLIC_REPO_URL=https://github.com/<owner>/xiaotianwen.git
+export PUBLIC_REPO_URL=https://github.com/<owner>/xiaotianwen-cognitive-runtime.git
 export PRIVATE_REPO_URL=https://github.com/<owner>/xiaotianwen-instance.git
 export SECRET_FILE="$PROJECT_ROOT/.host-secrets/secrets.env"
 

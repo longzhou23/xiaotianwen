@@ -1,0 +1,12 @@
+{
+  "kind": "deterministic-unit-fixture",
+  "source": "synthetic unit fixture only; not historical observational replay and no production Iris data",
+  "cases": [
+    {"content": "小黄鱼馄饨", "expected_exit": "NO_INTENT"},
+    {"content": "聪明脾气又好", "expected_exit": "NO_INTENT"},
+    {"content": "今晚几点观测？", "expected_action": "INFORM", "expected_grounding": "DEGRADED", "expected_exit": "ACTION_PROPOSED"},
+    {"content": "你心里有别人了😭", "expected_exit": "NO_INTENT"},
+    {"content": "小天文以前", "metadata_confirmed_self": false, "expected_perspective": "unresolved"},
+    {"content": "小天文以前", "metadata_confirmed_self": true, "expected_perspective": "autobiographical"}
+  ]
+}

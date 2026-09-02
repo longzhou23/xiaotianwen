@@ -11,7 +11,8 @@ const viewLoaders = {
   dataManage: () => import('@/views/DataManageView.vue'),
   replyControl: () => import('@/views/ReplyControlView.vue'),
   runLog: () => import('@/views/RunLogView.vue'),
-  hiddenConfig: () => import('@/views/HiddenConfigView.vue')
+  hiddenConfig: () => import('@/views/HiddenConfigView.vue'),
+  cognitiveObservatory: () => import('@/views/CognitiveObservatoryView.vue')
 }
 
 // AstrBot 插件 Page 的资源 asset_token 有效期很短。生产环境启动后立即在
@@ -91,6 +92,12 @@ const routes: RouteRecordRaw[] = [
     name: 'HiddenConfig',
     component: viewLoaders.hiddenConfig,
     meta: { title: '隐藏参数', icon: 'mdi-cog-outline' }
+  },
+  {
+    path: '/cognitive-observatory',
+    name: 'CognitiveObservatory',
+    component: viewLoaders.cognitiveObservatory,
+    meta: { title: '认知观测台', icon: 'mdi-eye-outline' }
   }
 ]
 

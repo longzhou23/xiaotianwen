@@ -32,6 +32,7 @@ def register_all_routes(context) -> None:
     from .routes.run_log_routes import register_run_log_routes
     from .routes.learning import register_learning_routes
     from .routes.persona_evolution import register_persona_evolution_routes
+    from .routes.observatory import register_observatory_routes
 
     register_memory_routes(context)
     register_profile_routes(context)
@@ -43,5 +44,6 @@ def register_all_routes(context) -> None:
     register_run_log_routes(context)
     register_learning_routes(context)
     register_persona_evolution_routes(context)
+    register_observatory_routes(context)
 
     logger.info("所有 Web API 路由已注册")

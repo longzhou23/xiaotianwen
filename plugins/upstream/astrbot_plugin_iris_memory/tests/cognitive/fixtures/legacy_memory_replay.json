@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "sanitized-historical-memory-projection",
+  "note": "A sanitized representative historical-memory replay. It contains no production Iris data and only exercises metadata-confirmed perspective projection.",
+  "cases": [
+    {
+      "id": "confirmed-self-autobiographical",
+      "memory_id": "legacy-fixture-self-001",
+      "content": "小天文曾经和群友讨论过观测计划",
+      "metadata": {
+        "cognitive_runtime": {
+          "subject_entity": "agent:xiaotianwen"
+        }
+      },
+      "expected_perspective": "autobiographical",
+      "expected_content": "小天文曾经和群友讨论过观测计划"
+    },
+    {
+      "id": "ambiguous-legacy-label-fail-closed",
+      "memory_id": "legacy-fixture-unknown-001",
+      "content": "助手曾经和群友讨论过观测计划",
+      "metadata": {},
+      "expected_perspective": "unresolved",
+      "expected_content": "助手曾经和群友讨论过观测计划"
+    }
+  ]
+}

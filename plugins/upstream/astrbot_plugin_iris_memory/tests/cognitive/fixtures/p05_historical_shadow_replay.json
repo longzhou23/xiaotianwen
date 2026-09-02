@@ -1,0 +1,72 @@
+{
+  "kind": "observational-historical-replay",
+  "source": "sanitized local historical replay example; not production data",
+  "cases": [
+    {
+      "event_id": "history:001",
+      "session_id": "group:history-a",
+      "actor_entity": "person:qq:10001",
+      "mode": "casual_group_chat",
+      "content": "小黄鱼馄饨",
+      "legacy_observation": {"actually_replied": true, "output": "听起来像菜单。"}
+    },
+    {
+      "event_id": "history:002",
+      "session_id": "group:history-a",
+      "actor_entity": "person:qq:10002",
+      "mode": "casual_group_chat",
+      "content": "聪明脾气又好",
+      "legacy_observation": {"actually_replied": false, "output": ""}
+    },
+    {
+      "event_id": "history:003",
+      "session_id": "group:history-b",
+      "actor_entity": "person:qq:10003",
+      "mode": "private",
+      "content": "今晚几点观测？",
+      "legacy_observation": {"actually_replied": true, "output": "我先看看官方公告。"}
+    },
+    {
+      "event_id": "history:004",
+      "session_id": "private:history-c",
+      "actor_entity": "person:qq:10004",
+      "mode": "private",
+      "content": "这个怎么安装？",
+      "legacy_observation": {"actually_replied": false, "output": ""}
+    },
+    {
+      "event_id": "history:005",
+      "session_id": "group:history-b",
+      "actor_entity": "person:qq:10005",
+      "mode": "casual_group_chat",
+      "content": "小天文，今晚几点观测？",
+      "mentioned_entities": ["agent:xiaotianwen"],
+      "legacy_observation": {"actually_replied": true, "output": "我看看官方公告。"}
+    },
+    {
+      "event_id": "history:006",
+      "session_id": "group:history-b",
+      "actor_entity": "person:qq:10006",
+      "mode": "casual_group_chat",
+      "content": "继续",
+      "reply_to_entity": "agent:xiaotianwen",
+      "legacy_observation": {"actually_replied": false, "output": ""}
+    },
+    {
+      "event_id": "history:001",
+      "session_id": "group:history-a",
+      "actor_entity": "person:qq:10001",
+      "mode": "casual_group_chat",
+      "content": "小黄鱼馄饨",
+      "legacy_observation": {"actually_replied": false, "output": ""}
+    },
+    {
+      "event_id": "",
+      "session_id": "",
+      "actor_entity": "person:replay:unknown",
+      "mode": "casual_group_chat",
+      "content": "malformed event",
+      "legacy_observation": {"actually_replied": false, "output": ""}
+    }
+  ]
+}

@@ -979,6 +979,7 @@ class L1Buffer(Component):
             memory_ids = []
             written_confidences: list[str] = []
             quality_filtered = 0
+            aggregated_cognitive = self._aggregate_cognitive_subject(messages)
             for item in filtered_items:
                 content = item.get("content", "")
                 if not content:
@@ -1007,6 +1008,9 @@ class L1Buffer(Component):
                     "confidence_level": confidence_str,
                     "kg_processed": False,
                 }
+
+                if aggregated_cognitive is not None:
+                    metadata["cognitive_runtime"] = dict(aggregated_cognitive)
 
                 if user_id:
                     metadata["user_id"] = user_id
@@ -1057,6 +1061,41 @@ class L1Buffer(Component):
         except Exception as e:
             logger.error(f"写入 L2 记忆库失败: {e}", exc_info=True)
             return None
+
+    @staticmethod
+    def _aggregate_cognitive_subject(messages: list[ContextMessage]) -> dict[str, Any] | None:
+        """Minimal L1 -> L2 subject propagation without text-based SELF guessing.
+
+        Only a homogeneous cognitive subject across the summarized L1 batch is
+        propagated as an entity.  Mixed batches are deliberately unresolved so a
+        summary cannot claim SELF just because an assistant message participated.
+        """
+        subjects: list[str] = []
+        provenance: list[str] = []
+        for msg in messages:
+            cognitive = msg.metadata.get("cognitive_runtime") if isinstance(msg.metadata, dict) else None
+            if not isinstance(cognitive, dict):
+                continue
+            subject = cognitive.get("subject_entity")
+            if isinstance(subject, str) and subject:
+                subjects.append(subject)
+                source = cognitive.get("source")
+                if isinstance(source, str):
+                    provenance.append(source)
+        if not subjects:
+            return None
+        unique_subjects = list(dict.fromkeys(subjects))
+        if len(unique_subjects) == 1:
+            return {
+                "subject_entity": unique_subjects[0],
+                "source": "aggregated_l1_summary",
+                "provenance": list(dict.fromkeys(provenance)),
+            }
+        return {
+            "subject_entity": "unresolved/mixed",
+            "source": "aggregated_l1_summary",
+            "provenance": list(dict.fromkeys(provenance)),
+        }
 
     def _build_name_to_id_map(self, messages: list[ContextMessage]) -> dict[str, str]:
         name_to_id: dict[str, str] = {}

@@ -3,7 +3,7 @@
     <v-navigation-drawer v-model="drawer" :rail="rail" permanent>
       <v-list-item
         prepend-icon="mdi-flower-tulip"
-        title="Iris Memory"
+        title="XiaoTianWen · Iris Memory"
         nav
         @click="rail = !rail"
       >
@@ -109,12 +109,13 @@ const navItems = [
   { to: '/data-manage', title: '数据管理', icon: 'mdi-swap-vertical' },
   { to: '/reply-control', title: '主动回复', icon: 'mdi-robot' },
   { to: '/run-log', title: '运行日志', icon: 'mdi-text-box-search-outline' },
+  { to: '/cognitive-observatory', title: '认知观测台', icon: 'mdi-eye-outline' },
   { to: '/hidden-config', title: '隐藏参数', icon: 'mdi-cog-outline' }
 ]
 
 const currentTitle = computed(() => {
   const item = navItems.find(i => i.to === route.path)
-  return item?.title || 'Iris Memory'
+  return item?.title || 'XiaoTianWen Cognitive Runtime · Iris Memory'
 })
 
 const handleRefresh = () => {

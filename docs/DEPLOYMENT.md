@@ -1,8 +1,13 @@
-# 小天文当前部署说明
+# XiaoTianWen Cognitive Runtime — 小天文当前部署说明
 
 最后核对：2026-08-20。
 
 本文只记录架构和运行约定；所有宿主机路径应通过部署环境注入，不应照抄旧机器的绝对路径。
+
+部署中的认知运行时仍通过 `astrbot_plugin_iris_memory` 兼容宿主加载：
+`XiaoTianWen Cognitive Runtime` 是整体项目身份，`Iris Memory` 是记忆子系统，
+`AstrBot` 是当前宿主。P1 ReviewEvidence promotion 保持 DISABLED / FAIL-CLOSED，
+不会因代码更新迁移或写回既有 Iris 生产数据。
 
 ## 当前架构
 

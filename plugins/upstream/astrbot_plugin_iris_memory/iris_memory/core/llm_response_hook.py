@@ -63,6 +63,14 @@ async def handle_llm_response(
         role="assistant",
         content=assistant_msg,
         source="assistant",
+        metadata={
+            "cognitive_runtime": {
+                "subject_entity": "agent:xiaotianwen",
+                "perspective": "autobiographical",
+                "source": "explicit_self_output",
+                "provenance": ["assistant_l1_writer"],
+            }
+        },
         persona_id=persona_id,
     )
 

@@ -1,10 +1,67 @@
-# 小天文
+# XiaoTianWen Cognitive Runtime
 
-> 基于 AstrBot 与 SnowLuma 的可迁移智能陪伴实例系统。
+> A host-agnostic cognitive runtime for episodic experience, bounded review, and future structure-evolving behavior.
+
+**Current milestone: P1 Cognitive Foundation — ACCEPTED**
+
+XiaoTianWen Cognitive Runtime 是面向长期 Agent 的宿主无关认知运行时。当前提供身份与视角、规范化体验、Episode/Outcome、受约束 Review 以及只读 Cognitive Observatory 基础；AstrBot 是当前宿主适配环境，Iris Memory 是兼容部署中的记忆子系统位置。内部插件名、Python import path、路由前缀和存储目录为兼容性保持不变。
+
+P1 的 ReviewEvidence promotion gate **有意关闭**：ReviewRun 与 ReviewFinding 可以产生和审阅，但当前正常运行不会把 Finding 晋升为 ReviewEvidence。这个边界确保未经冻结的语义不会进入历史事实或未来行为。
 
 小天文不是绑定某一台 NUC、VM 或云服务器的一次性安装。项目把**公共代码**、**私有实例状态**、**主机密钥**和**可重建运行时**明确分开：在全新的 Ubuntu 24.04 主机上，只要提供公共仓库、私有实例仓库及必要凭据，就应能恢复一个完整、可维护的实例。
 
-本仓库是小天文的 **Public Repository**，保存可公开维护的代码、插件、部署脚本、配置模板和文档。人格、记忆、知识库、QQ 登录状态以及真实凭据均不属于本仓库。
+本仓库是 XiaoTianWen / 小天文的 **Public Repository**，保存可公开维护的代码、插件、部署脚本、配置模板和文档。人格、记忆、知识库、QQ 登录状态以及真实凭据均不属于本仓库。
+
+## P1 认知边界
+
+```text
+Raw Event
+  → Identity / Perspective
+  → Canonical Experience
+  → Situation / Trigger
+  → Participation / Intent
+  → Behavior Execution
+  → Episode
+  → Outcome
+  → ReviewRun
+  → ReviewFinding
+  → Promotion Gate [CLOSED]
+  × ReviewEvidence
+```
+
+P1 已落地：
+
+- canonical experience、identity / perspective 与 SELF 绑定基础；
+- Episode 生命周期、OutcomeObservation 与 BehaviorExecutionRecord；
+- factual attachment validation 与 fail-closed Review contracts；
+- ReviewRun / ReviewFinding 生成、持久化和历史 replay；
+- bounded ExecutionRecord observability、只读 Cognitive Observatory 和 request-local Preview Review。
+
+P1 尚不声称实现：
+
+- autonomous learning、长期行为适应或 reward learning；
+- BehavioralPrior、Consolidation、Structure Evolution；
+- ReviewEvidence production、Persona evolution 或任何未来行为写回。
+
+项目定位如下；标注为 future/planned 的组件不属于当前实现：
+
+```text
+XiaoTianWen Cognitive Runtime
+├─ Identity / Perspective
+├─ Iris Memory Adapter
+├─ Situation / Trigger
+├─ Participation / Intent
+├─ Behavior Execution
+├─ Episode & Outcome
+├─ Review
+├─ Cognitive Observatory
+├─ ReviewEvidence          [future]
+├─ Consolidation           [future]
+├─ BehavioralPrior         [future]
+└─ Host Adapters
+   ├─ AstrBot              [current]
+   └─ OpenJiuwen           [planned / experimental]
+```
 
 ## 项目概览
 
@@ -107,7 +164,7 @@ xiaotianwen/
 ├── examples/           示例文件与参考配置
 ├── docs/               架构、部署、迁移、演练、版本和设计文档
 ├── LICENSE
-└── README.md           本文件
+└── README.md           本文件（XiaoTianWen Cognitive Runtime 项目入口）
 ```
 
 每个插件应通过 `plugin.meta.yaml` 或 `plugins/manifest/` 标记来源、许可证、版本、修改状态和维护者。上游插件在公开发布前必须完成许可证和本地差异审查。
@@ -148,7 +205,7 @@ xiaotianwen/
 
 ```bash
 export PROJECT_ROOT="$HOME/xiaotianwen"
-export PUBLIC_REPO_URL="https://github.com/<owner>/xiaotianwen.git"
+export PUBLIC_REPO_URL="https://github.com/<owner>/xiaotianwen-cognitive-runtime.git"
 export PRIVATE_REPO_URL="https://github.com/<owner>/xiaotianwen-instance.git"
 export SECRET_FILE="$PROJECT_ROOT/.host-secrets/secrets.env"
 
@@ -260,6 +317,7 @@ SnowLuma / QQ 入口
 | [恢复演练记录](docs/DRILL-20260826.md) | 新机恢复验证与待补全事项 |
 | [运维网关设计](docs/UNIFIED_OPERATIONS_GATEWAY_DESIGN.md) | 统一管理入口设计；不属于消息链路运行依赖 |
 | [部署自动化需求](docs/Xiaotianwen_Deployment_Automation_Requirement.md) | 可复现部署目标、验收标准与后续路线图 |
+| [P1 Foundation Checkpoint](docs/P1-FOUNDATION-CHECKPOINT.md) | P1 认知基础验收、冻结边界与已知债务 |
 | [变更记录](docs/CHANGELOG.md) | 面向版本的变更历史 |
 
 ## 变更与贡献约定

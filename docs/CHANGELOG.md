@@ -2,6 +2,22 @@
 
 本文件记录 AstrBot 工作区级别的重要变更。
 
+## [P1 Foundation] - 2026-09-02
+
+### XiaoTianWen Cognitive Runtime checkpoint
+
+- 正式项目身份整理为 **XiaoTianWen Cognitive Runtime**；`Iris Memory` 保持为记忆子系统与兼容宿主位置，`AstrBot` 保持为当前宿主适配环境。
+- P0/P1 foundation 标记为 **ACCEPTED**：identity/perspective、Episode/Outcome、BehaviorExecutionRecord、ReviewRun/ReviewFinding 和 Cognitive Observatory 均纳入公共 checkpoint。
+- ReviewEvidence 合同与 Store integrity surface 保留，但 P1 正常运行中的 promotion gate 继续 **DISABLED / FAIL-CLOSED**；Finding 不会改变未来行为或任何 Iris/Persona/Affect/Relationship 状态。
+- 增加 bounded ExecutionRecord observability、request-local Preview Review、历史 replay fixture，以及 HOST_OUTPUT execution identity/revision/stage 的 immutable linkage 校验。
+- 不修改既有插件 identifier、Python import path、AstrBot 路由、配置 key、存储目录或 Iris 数据；本版本不是生产记忆迁移。
+
+### 已知债务
+
+- ToolResult frozen factual contract 与未来逐陈述 promotion contract 尚未冻结，因此 ToolResult 证据保持 fail-closed。
+- ExecutionRecord registry 仍是 bounded/runtime-local；生产 ReviewStore 尚未接入运行链路。
+- Dashboard/manual showcase、真实 Provider/QQ、生产并发和长时运行仍需独立验收；Windows Chroma `metadata.db` WinError 32 与本 checkpoint 无关。
+
 ## [Unreleased] - 2026-08-20
 
 ### 变更：活动目录与历史归档分离

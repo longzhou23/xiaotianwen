@@ -319,6 +319,18 @@ async def _add_to_l1_buffer(
     if user_name:
         metadata["user_name"] = user_name
 
+    # The Cognitive Runtime emits adapter-owned metadata for new writes only.
+    # Existing Iris records remain untouched; failure here cannot block L1.
+    try:
+        from iris_memory.cognitive.iris_adapter import get_cognitive_runtime
+        from iris_memory.cognitive.contracts import to_json_safe
+
+        preprocessed = get_cognitive_runtime().pre_adapter.attach(event)
+        get_cognitive_runtime().behavior.observe(preprocessed.experience)
+        metadata["cognitive_runtime"] = to_json_safe(preprocessed.metadata)
+    except Exception as exc:
+        logger.warning(f"Cognitive Iris pre-adapter failed closed: {exc}")
+
     raw_msg = adapter.get_raw_message(event)
     message_id = str(raw_msg.get("message_id", "")) if raw_msg else ""
     if message_id:

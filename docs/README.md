@@ -1,6 +1,10 @@
-# 小天文公共代码仓库
+# XiaoTianWen Cognitive Runtime — 公共代码仓库
 
-本目录只保留 SnowLuma + AstrBot 所需的公共代码、插件、脚本和模板。实例数据、NapCat 历史部署、备份和回滚快照不在这里。
+本目录只保留 XiaoTianWen Cognitive Runtime 与 SnowLuma + AstrBot 宿主所需的公共代码、插件、脚本和模板。实例数据、NapCat 历史部署、备份和回滚快照不在这里。
+
+当前 P1 Cognitive Foundation 已通过独立验收。认知运行时仍以
+`astrbot_plugin_iris_memory` 作为兼容宿主位置；本仓库不迁移既有插件 identifier、
+Python import path、AstrBot 路由、配置 key 或 Iris 数据。
 
 ## 当前组件
 
@@ -19,6 +23,7 @@
 - [部署说明](DEPLOYMENT.md)：当前 Docker/服务部署细节。
 - [迁移说明](MIGRATION.md)：公共代码、私有实例与新主机恢复流程。
 - [版本策略](VERSION_POLICY.md)：AstrBot、SnowLuma 和插件的版本管理。
+- [P1 Foundation Checkpoint](P1-FOUNDATION-CHECKPOINT.md)：P1 认知基础的验收范围、冻结边界与已知债务。
 - [统一 TODO](../Todo.md)：编排层重构、稳定性、安全、SnowLuma、迁移、Agent Loop、缓存与性能的唯一主计划。
 
 ## 日常命令

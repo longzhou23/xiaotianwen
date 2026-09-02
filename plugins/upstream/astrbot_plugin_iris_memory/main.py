@@ -106,6 +106,11 @@ from iris_memory.proactive.state import StateManager
 from iris_memory.proactive.stats import StatsCollector
 from iris_memory.proactive.time_hint import resolve_datetime_reminder
 from iris_memory.proactive.tools import ToolContext
+from iris_memory.cognitive.iris_adapter import get_cognitive_runtime
+from iris_memory.cognitive.legacy_proactive import LegacyIrisProactiveSignalAdapter
+from iris_memory.cognitive.contracts import EventExecutionContext, RuntimeMode
+from iris_memory.cognitive.episode_store import AppendOnlyEpisodeStore
+from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
 from iris_memory.extras import ErrorFriendlyProcessor, MarkdownStripper
 
 logger = get_logger("main")
@@ -150,6 +155,7 @@ class IrisMemoryPlugin(Star):
         try:
             # ── 记忆侧初始化 ──
             data_dir = StarTools.get_data_dir()
+            self.data_dir = data_dir
             self.config: Config = init_config(config, data_dir)
             logger.info(f"插件数据目录：{data_dir}")
 
@@ -199,6 +205,8 @@ class IrisMemoryPlugin(Star):
             self._tool_ctx = ToolContext()
             self._admin = AdminCommands(self._state)
             self._stats = StatsCollector()
+            self._episode_store = None
+            self._episode_observer = None
             self._reply_in_progress: dict[str, float] = {}
             self._passive_active: dict[str, float] = {}
             self._triggering: dict[str, float] = {}
@@ -234,6 +242,28 @@ class IrisMemoryPlugin(Star):
                 exc_info=True,
             )
             raise
+
+    def _init_episode_shadow_observer(self) -> None:
+        """Create the durable Episode/Outcome Shadow observer if possible.
+
+        This is observation-only.  Any failure must not stop the plugin or Host.
+        """
+        try:
+            from pathlib import Path as _Path
+
+            episodes_dir = _Path(self.data_dir) / "cognitive" / "episodes"
+            episodes_dir.mkdir(parents=True, exist_ok=True)
+            store = AppendOnlyEpisodeStore(episodes_dir / "episodes.jsonl")
+            observer = EpisodeShadowObserver(store)
+            runtime = get_cognitive_runtime()
+            runtime.episode_observer = observer
+            self._episode_store = store
+            self._episode_observer = observer
+            logger.info("Episode/Outcome Shadow observer enabled at %s", episodes_dir)
+        except Exception:
+            logger.exception(
+                "Episode/Outcome Shadow observer initialization failed; Host continues without Episode observation"
+            )
 
     # ========================================================================
     # 记忆侧注册
@@ -285,6 +315,9 @@ class IrisMemoryPlugin(Star):
     # ========================================================================
 
     async def initialize(self) -> None:
+        # 0. Episode/Outcome Shadow observation (fail-open).
+        self._init_episode_shadow_observer()
+
         # 1. 记忆组件初始化
         try:
             await initialize_components(self.component_manager)
@@ -727,8 +760,22 @@ class IrisMemoryPlugin(Star):
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
-        # 1. 主动回复统一决策（仅处理 _triggering 中的群；可能 stop_event 终止请求）
+        # 1. Cognitive P0.5 evaluates first in Shadow by default.  It does not
+        # alter the legacy decision unless an explicitly enabled GUARD blocks.
+        if await self._handle_cognitive_behavior(event):
+            return
+
+        # 1.5 Frozen legacy proactive path keeps its existing authority.
         if await self._handle_reply_decision(event):
+            pending = event.get_extra("iris_cognitive_behavior_result")
+            if pending is not None:
+                try:
+                    record = get_cognitive_runtime().observe_host_silence(
+                        pending, legacy_fallthrough=False
+                    )
+                    event.set_extra("iris_cognitive_execution_record", record)
+                except Exception as exc:
+                    logger.warning(f"Cognitive P0.5 legacy-stop observation failed: {exc}")
             return
 
         # 2. 记忆侧：被动触发检测 + 上下文接管 + L1/L2/L3/画像注入
@@ -738,6 +785,9 @@ class IrisMemoryPlugin(Star):
                 event, req, self.context, self.component_manager
             )
             await preprocess_llm_request(event, req, self.component_manager)
+
+        # AUTHORITATIVE is a P0.5 contract only.  No production switch is
+        # exposed here, so Shadow/Guard never alter the realizer prompt.
 
         # 3. 主动回复发言提示：决策通过后由 _handle_reply_decision 暂存，
         # 在记忆注入之后追加，保证 LLM 先看到上下文、再看到发言指令
@@ -763,6 +813,48 @@ class IrisMemoryPlugin(Star):
                     "prompt": getattr(req, "prompt", "") or "",
                 },
             )
+
+    async def _handle_cognitive_behavior(self, event: AstrMessageEvent) -> bool:
+        """Run P0.5 proposal; SHADOW never changes legacy Host behavior."""
+        runtime = None
+        context = None
+        try:
+            runtime = get_cognitive_runtime()
+            # Event-scoped mode snapshot.  No code after this point may consult
+            # the live global runtime.runtime_mode for this event's decision.
+            context = EventExecutionContext(
+                event_id=f"runtime:{id(event)}",
+                runtime_mode=runtime.runtime_mode,
+            )
+            prepared = runtime.pre_adapter.attach(event)
+            runtime.behavior.observe(prepared.experience)
+            legacy = await LegacyIrisProactiveSignalAdapter(self._state).read_consistent(event)
+            result = runtime.run_behavior(
+                prepared.experience, legacy, runtime_mode=context.runtime_mode
+            )
+        except Exception as exc:
+            # Shadow preserves the frozen Legacy baseline.  Guard is deliberately
+            # different: a failed safety decision must not silently become allow.
+            mode = context.runtime_mode if context is not None else None
+            if mode is RuntimeMode.GUARD:
+                logger.error(f"Cognitive P0.6 Guard error; stopping event: {exc}")
+                event.set_extra("iris_cognitive_runtime_error", "RUNTIME_ERROR")
+                event.stop_event()
+                return True
+            logger.warning(f"Cognitive P0 behavior adapter failed open in SHADOW compatibility path: {exc}")
+            return False
+
+        event.set_extra("iris_cognitive_behavior_result", result)
+        if runtime.should_guard_block(result):
+            try:
+                record = runtime.record_guard_block(result)
+                event.set_extra("iris_cognitive_execution_record", record)
+            except Exception as exc:
+                logger.warning(f"Cognitive P0.5 guard observation failed: {exc}")
+            event.stop_event()
+            return True
+
+        return False
 
     async def _handle_reply_decision(self, event: AstrMessageEvent) -> bool:
         """主动回复统一决策执行点。
@@ -956,6 +1048,18 @@ class IrisMemoryPlugin(Star):
         # 1. 记忆侧：bot 回复入 L1
         if self.component_manager:
             await handle_llm_response(event, resp, self.component_manager)
+        cognitive_result = event.get_extra("iris_cognitive_behavior_result")
+        if cognitive_result is not None:
+            try:
+                record = get_cognitive_runtime().observe_host_output(
+                    cognitive_result,
+                    resp.completion_text or "",
+                    legacy_fallthrough=True,
+                )
+                event.set_extra("iris_cognitive_behavior_result", None)
+                event.set_extra("iris_cognitive_execution_record", record)
+            except Exception as exc:
+                logger.warning(f"Cognitive P0.5 host-output observation failed: {exc}")
         # 2. 主动回复侧：按 iris_mode 记账
         await self._reply_on_llm_response(event, resp)
 
@@ -1010,6 +1114,13 @@ class IrisMemoryPlugin(Star):
     @filter.after_message_sent()
     async def on_message_sent(self, event) -> None:
         """主动回复侧：bot 消息入滑动窗口 + 写 ThreadAnchor"""
+        cognitive_record = event.get_extra("iris_cognitive_execution_record")
+        if cognitive_record is not None:
+            try:
+                record = get_cognitive_runtime().observe_dispatch(cognitive_record)
+                event.set_extra("iris_cognitive_execution_record", record)
+            except Exception as exc:
+                logger.warning(f"Cognitive P0.5 dispatch observation failed: {exc}")
         group_id = event.get_group_id()
         if not group_id:
             return

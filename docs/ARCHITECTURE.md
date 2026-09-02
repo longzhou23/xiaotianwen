@@ -1,4 +1,4 @@
-# 小天文项目架构文档
+# XiaoTianWen Cognitive Runtime — 小天文项目架构文档
 
 > 文档版本：v2.0（2026-09-02）
 > 适用范围：`xiaotianwen` 公共代码仓库、私有实例数据、Ubuntu/Docker 运行环境以及 QQ-AstrBot 处理链路
@@ -7,6 +7,10 @@
 ## 1. 文档目的
 
 小天文不是某一台 NUC 或某一台云服务器上的临时安装，而是由代码、实例数据、运行时和外部服务共同组成的可迁移实例。本文件回答以下问题：
+
+在整体项目身份上，`XiaoTianWen Cognitive Runtime` 是宿主无关的认知运行时；
+`Iris Memory` 是当前兼容部署中的记忆子系统位置，`AstrBot` 是当前宿主适配环境。
+内部插件名和路径保持不变，不因项目 branding 发生 package migration。
 
 1. 一条 QQ 消息从哪里进入，如何经过 SnowLuma、AstrBot 和插件，最终返回 QQ；
 2. 哪些文件属于公共代码，哪些属于私有实例、运行缓存或密钥；

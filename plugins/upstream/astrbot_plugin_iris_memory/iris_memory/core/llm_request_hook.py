@@ -985,10 +985,9 @@ async def _collect_l2_memory(
             budget_tokens = max_tokens
             trimmed = MemoryRetriever.trim_by_token_budget(l2_results, max_tokens)
             injected_count = len(trimmed)
-            context_lines = ["## 相关记忆"]
-            for i, result in enumerate(trimmed, 1):
-                context_lines.append(f"{i}. {result.entry.content}")
-            context_text = "\n".join(context_lines)
+            from iris_memory.cognitive.iris_adapter import get_cognitive_runtime
+
+            context_text = get_cognitive_runtime().post_adapter.format_l2_context(trimmed)
 
         if context_text:
             logger.debug(f"已收集检索记忆到群聊 {group_id}")

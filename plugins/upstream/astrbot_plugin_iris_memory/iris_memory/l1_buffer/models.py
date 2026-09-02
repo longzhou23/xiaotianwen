@@ -7,8 +7,22 @@ Iris Chat Memory - L1 数据模型
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Dict, Any, Optional, List
+from enum import Enum
+from typing import Literal, Dict, Any, Optional, List, Mapping
 from collections import deque
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert runtime immutable containers to JSON-safe plain data."""
+    if isinstance(value, Mapping):
+        return {_json_safe(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list, set, frozenset)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
 
 
 @dataclass
@@ -46,7 +60,7 @@ class ContextMessage:
             "timestamp": self.timestamp.isoformat(),
             "token_count": self.token_count,
             "source": self.source,
-            "metadata": self.metadata,
+            "metadata": _json_safe(self.metadata),
             "persona_id": self.persona_id,
         }
 
