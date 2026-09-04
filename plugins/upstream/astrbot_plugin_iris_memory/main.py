@@ -109,9 +109,15 @@ from iris_memory.proactive.tools import ToolContext
 from iris_memory.cognitive.iris_adapter import get_cognitive_runtime
 from iris_memory.cognitive.legacy_proactive import LegacyIrisProactiveSignalAdapter
 from iris_memory.cognitive.contracts import EventExecutionContext, RuntimeMode
+from iris_memory.cognitive.episode import EpisodeState
 from iris_memory.cognitive.episode_store import AppendOnlyEpisodeStore
 from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
+from iris_memory.cognitive.reply_link_archive import (
+    ProductionReviewCompletionCoordinator,
+    create_runtime_archive_service,
+)
 from iris_memory.cognitive.reply_link_capture import create_runtime_capture_service
+from iris_memory.cognitive.review_store import AppendOnlyReviewStore
 from iris_memory.extras import ErrorFriendlyProcessor, MarkdownStripper
 
 logger = get_logger("main")
@@ -218,6 +224,8 @@ class IrisMemoryPlugin(Star):
             self._episode_store = None
             self._episode_observer = None
             self._p2r0_capture = None
+            self._p2r0_archive = None
+            self._production_review_completion = None
             self._reply_in_progress: dict[str, float] = {}
             self._passive_active: dict[str, float] = {}
             self._triggering: dict[str, float] = {}
@@ -288,6 +296,80 @@ class IrisMemoryPlugin(Star):
                 "P2r0 factual capture initialization failed; capture remains unavailable"
             )
 
+    def _init_p2r0_archive_service(self) -> None:
+        """Own one production P2a Run/snapshot + P2r0 archive store.
+
+        This is composition only.  No Review/Preview path calls the service
+        implicitly, so Observatory previews remain request-local.
+        """
+        self._p2r0_archive = None
+        self._production_review_completion = None
+        capture = self._p2r0_capture
+        if capture is None:
+            return
+        try:
+            self._p2r0_archive = create_runtime_archive_service(
+                self.data_dir, capture.store
+            )
+            review_dir = Path(self.data_dir) / "cognitive" / "reviews"
+            review_dir.mkdir(parents=True, exist_ok=True)
+            review_store = AppendOnlyReviewStore(review_dir / "reviews.jsonl")
+            self._production_review_completion = ProductionReviewCompletionCoordinator(
+                self._p2r0_archive, review_store
+            )
+            logger.info("P2r0 historical archive wiring enabled")
+        except Exception:
+            logger.exception(
+                "P2r0 historical archive wiring initialization failed; archive remains unavailable"
+            )
+
+    def archive_review_run(self, run: object, snapshot: object):
+        """Explicitly archive a completed ReviewRun without touching Preview.
+
+        Callers must invoke this only after their ReviewRun has completed.  No
+        normal Observatory preview path calls it implicitly.
+        """
+        service = self._p2r0_archive
+        if service is None:
+            return None
+        return service.archive_review_run(run, snapshot)
+
+    def complete_episode_for_review(self, episode_id: str):
+        """Run the non-Preview completion path for an already FINALIZED Episode."""
+        coordinator = self._production_review_completion
+        store = self._episode_store
+        if coordinator is None or store is None:
+            return None
+        try:
+            episode = store.get_episode(episode_id)
+            if episode is None:
+                return None
+            if episode.state is not EpisodeState.FINALIZED:
+                return None
+            return coordinator.complete_episode(episode, store.get_outcomes(episode_id))
+        except Exception:
+            logger.exception("Production Review completion failed for Episode %s", episode_id)
+            return None
+
+    def finalize_episode_for_review(self, episode_id: str):
+        """Finalize one Episode at its explicit completion point, then Review it."""
+        store = self._episode_store
+        if store is None:
+            return None
+        try:
+            episode = store.get_episode(episode_id)
+            if episode is None:
+                return None
+            if episode.state is not EpisodeState.FINALIZED:
+                episode = store.transition_state(
+                    episode_id, EpisodeState.FINALIZED,
+                    reason="production_review_completion",
+                )
+            return self.complete_episode_for_review(episode.episode_id)
+        except Exception:
+            logger.exception("Production Episode finalization failed for %s", episode_id)
+            return None
+
     # ========================================================================
     # 记忆侧注册
     # ========================================================================
@@ -343,6 +425,7 @@ class IrisMemoryPlugin(Star):
         # 0.1 P2r0 factual capture owns one replayed store.  It is independent
         # of Review/Archive wiring and has no in-memory fallback authority.
         self._init_p2r0_capture_service()
+        self._init_p2r0_archive_service()
 
         # 1. 记忆组件初始化
         try:
