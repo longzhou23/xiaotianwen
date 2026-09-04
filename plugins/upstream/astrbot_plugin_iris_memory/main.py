@@ -111,6 +111,7 @@ from iris_memory.cognitive.legacy_proactive import LegacyIrisProactiveSignalAdap
 from iris_memory.cognitive.contracts import EventExecutionContext, RuntimeMode
 from iris_memory.cognitive.episode_store import AppendOnlyEpisodeStore
 from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
+from iris_memory.cognitive.reply_link_capture import create_runtime_capture_service
 from iris_memory.extras import ErrorFriendlyProcessor, MarkdownStripper
 
 logger = get_logger("main")
@@ -122,6 +123,15 @@ LEGACY_MIGRATION_ENABLED = True
 
 _IRIS_ACTIVE_TIMEOUT = 120
 _UMO_KV_KEY = "iris_reply:group_umo"
+
+# H0 is available on accepted AstrBot hosts.  Keep plugin imports compatible
+# with older test/runtime hosts that do not expose the receipt decorator yet;
+# in that case the method remains inert rather than falling back to legacy
+# after_message_sent as a factual authority.
+_after_message_send_result = getattr(filter, "after_message_send_result", None)
+if _after_message_send_result is None:
+    def _after_message_send_result(**_kwargs):
+        return lambda function: function
 
 
 def _detect_passive_trigger(event: AstrMessageEvent, req, context: Context) -> None:
@@ -207,6 +217,7 @@ class IrisMemoryPlugin(Star):
             self._stats = StatsCollector()
             self._episode_store = None
             self._episode_observer = None
+            self._p2r0_capture = None
             self._reply_in_progress: dict[str, float] = {}
             self._passive_active: dict[str, float] = {}
             self._triggering: dict[str, float] = {}
@@ -265,6 +276,18 @@ class IrisMemoryPlugin(Star):
                 "Episode/Outcome Shadow observer initialization failed; Host continues without Episode observation"
             )
 
+    def _init_p2r0_capture_service(self) -> None:
+        """Own and replay the single P2r0 factual capture store for this runtime."""
+        try:
+            runtime = get_cognitive_runtime()
+            self._p2r0_capture = create_runtime_capture_service(self.data_dir, runtime)
+            logger.info("P2r0 factual capture enabled")
+        except Exception:
+            self._p2r0_capture = None
+            logger.exception(
+                "P2r0 factual capture initialization failed; capture remains unavailable"
+            )
+
     # ========================================================================
     # 记忆侧注册
     # ========================================================================
@@ -317,6 +340,9 @@ class IrisMemoryPlugin(Star):
     async def initialize(self) -> None:
         # 0. Episode/Outcome Shadow observation (fail-open).
         self._init_episode_shadow_observer()
+        # 0.1 P2r0 factual capture owns one replayed store.  It is independent
+        # of Review/Archive wiring and has no in-memory fallback authority.
+        self._init_p2r0_capture_service()
 
         # 1. 记忆组件初始化
         try:
@@ -747,6 +773,12 @@ class IrisMemoryPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent) -> None:
         """记忆侧：全类型消息入 L1 缓冲、图片入队"""
+        capture = getattr(self, "_p2r0_capture", None)
+        if capture is not None:
+            try:
+                capture.capture_inbound(event)
+            except Exception as exc:  # pragma: no cover - defensive boundary  # noqa: BLE001
+                logger.warning("P2r0 inbound reply capture failed closed: %s", exc)
         if self.component_manager:
             await handle_user_message(event, self.component_manager)
 
@@ -1176,6 +1208,17 @@ class IrisMemoryPlugin(Star):
                 )
             await self._state.save_dirty(self._kv_save)
             logger.debug(f"Iris Reply: anchor written (reply) for group {group_id}")
+
+    @_after_message_send_result()
+    async def on_message_send_result(self, event, result) -> None:
+        """Observe finalized H0 receipts without controlling the send result."""
+        capture = getattr(self, "_p2r0_capture", None)
+        if capture is None:
+            return
+        try:
+            capture.capture_host_send_result(event, result)
+        except Exception as exc:  # pragma: no cover - defensive hook boundary  # noqa: BLE001
+            logger.warning("P2r0 Host receipt capture failed closed: %s", exc)
 
     async def _passive_watch_eval(
         self, group_id: str, provider_id: str, fallback_sender: str, bot_text: str,
