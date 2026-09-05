@@ -224,6 +224,7 @@ class IrisMemoryPlugin(Star):
             self._episode_store = None
             self._episode_observer = None
             self._p2r0_capture = None
+            self._inbound_semantic_authority = None
             self._p2r0_archive = None
             self._production_review_completion = None
             self._reply_in_progress: dict[str, float] = {}
@@ -289,6 +290,7 @@ class IrisMemoryPlugin(Star):
         try:
             runtime = get_cognitive_runtime()
             self._p2r0_capture = create_runtime_capture_service(self.data_dir, runtime)
+            self._inbound_semantic_authority = self._p2r0_capture.semantic_authority_service
             logger.info("P2r0 factual capture enabled")
         except Exception:
             self._p2r0_capture = None

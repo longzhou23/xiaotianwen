@@ -1,8 +1,9 @@
 """P2r.0.3b factual capture integration.
 
 This module observes immutable AstrBot send receipts and inbound message
-chains.  It deliberately stops at factual carriers: no archive assembly,
-reply-link resolution, Review interpretation, or Evidence production belongs
+chains.  P2r.0 remains factual capture; an optional P2r.1a service may consume
+the same attached inbound event only after the P2r.0 fact is committed.  No
+archive assembly, reply-link resolution, or ReviewEvidence production belongs
 here.
 """
 
@@ -85,17 +86,27 @@ class P2r0CaptureService:
 
     owner = "P2r0 Factual Capture"
 
-    def __init__(self, store: P2r0Store, runtime: CognitiveRuntime) -> None:
+    def __init__(
+        self,
+        store: P2r0Store,
+        runtime: CognitiveRuntime,
+        semantic_authority_service: object | None = None,
+    ) -> None:
         if type(store) is not P2r0Store:
             raise TypeError("capture service requires the authoritative P2r0Store")
         if not isinstance(runtime, CognitiveRuntime):
             raise TypeError("capture service requires the cognitive runtime")
         self._store = store
         self._runtime = runtime
+        self._semantic_authority_service = semantic_authority_service
 
     @property
     def store(self) -> P2r0Store:
         return self._store
+
+    @property
+    def semantic_authority_service(self) -> object | None:
+        return self._semantic_authority_service
 
     def capture_host_send_result(self, event: object, result: object) -> CaptureResult:
         """Persist eligible MESSAGE identities from one finalized H0 result.
@@ -154,7 +165,8 @@ class P2r0CaptureService:
         """Capture one inbound reply target from the complete original chain."""
         try:
             source = self._source_identity(event)
-            source_event_id = self._source_event_id(event)
+            attached = self._attached_preprocess(event)
+            source_event_id = self._event_id_from_attached(attached)
             reply_cls = _reply_type()
             if reply_cls is None:
                 return CaptureResult()
@@ -186,6 +198,19 @@ class P2r0CaptureService:
                 reply_target_platform_message_identity=target_identity,
             )
             self._store.record_inbound_reply_fact(fact)
+            semantic_service = self._semantic_authority_service
+            if semantic_service is not None:
+                try:
+                    resolved_event = getattr(getattr(attached, "experience", None), "event", None)
+                    evaluate = getattr(semantic_service, "evaluate_after_inbound_commit", None)
+                    if callable(evaluate):
+                        evaluate(
+                            resolved_event=resolved_event,
+                            inbound_fact=fact,
+                            source_platform_message_identity=source,
+                        )
+                except Exception as exc:  # noqa: BLE001 - semantic capture never controls host
+                    logger.warning("P2r1a semantic authority capture rejected: %s", exc)
             return CaptureResult(inbound_facts=1)
         except Exception as exc:  # noqa: BLE001 - malformed input is fail-closed
             logger.warning("P2r0 inbound factual capture rejected: %s", exc)
@@ -206,9 +231,16 @@ class P2r0CaptureService:
         return PlatformMessageIdentityV1(platform_id, account_id, conversation_id, message_id)
 
     def _source_event_id(self, event: object) -> str:
+        return self._event_id_from_attached(self._attached_preprocess(event))
+
+    def _attached_preprocess(self, event: object) -> object:
         attached = self._runtime.pre_adapter.attached(event)  # type: ignore[arg-type]
         if attached is None:
             attached = self._runtime.pre_adapter.attach(event)  # type: ignore[arg-type]
+        return attached
+
+    @staticmethod
+    def _event_id_from_attached(attached: object) -> str:
         event_id = getattr(getattr(attached, "experience", None), "event", None)
         event_id = getattr(event_id, "event_id", None)
         if type(event_id) is not str or not event_id:
@@ -280,12 +312,29 @@ class P2r0CaptureService:
         return rev1[0], matches[0], dispatch
 
 
-def create_runtime_capture_service(data_dir: str | Path, runtime: CognitiveRuntime) -> P2r0CaptureService:
-    """Create the one runtime-owned P2r0 capture store and replay it first."""
+def create_runtime_capture_service(
+    data_dir: str | Path,
+    runtime: CognitiveRuntime,
+) -> P2r0CaptureService:
+    """Create runtime capture with the production semantic service composition.
+
+    The production factory intentionally accepts no evaluator/service
+    injection.  Tests and future contract work can compose the service by
+    constructing :class:`P2r0CaptureService` directly.
+    """
     root = Path(data_dir) / "cognitive" / "p2r0-reply-link-facts"
     root.mkdir(parents=True, exist_ok=True)
     store = P2r0Store(root / "facts.jsonl")
-    return P2r0CaptureService(store, runtime)
+    semantic_service = None
+    try:
+        from .inbound_semantic_authority import (
+            create_runtime_semantic_authority_service,
+        )
+
+        semantic_service = create_runtime_semantic_authority_service(data_dir)
+    except Exception:
+        logger.exception("P2r1a semantic authority store unavailable; P2r0 remains enabled")
+    return P2r0CaptureService(store, runtime, semantic_service)
 
 
 ReplyLinkCaptureService = P2r0CaptureService
