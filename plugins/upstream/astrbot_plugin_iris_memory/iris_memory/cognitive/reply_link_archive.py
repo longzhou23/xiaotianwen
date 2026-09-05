@@ -61,6 +61,8 @@ class ProductionReviewCompletionCoordinator:
         self,
         archive_service: P2r0HistoricalArchiveService,
         review_store: ReviewStore,
+        *,
+        evidence_promoter: object | None = None,
     ) -> None:
         if not isinstance(archive_service, P2r0HistoricalArchiveService):
             raise HistoricalArchiveWiringError("completion requires archive wiring service")
@@ -68,6 +70,7 @@ class ProductionReviewCompletionCoordinator:
             raise HistoricalArchiveWiringError("completion requires a ReviewStore")
         self._archive_service = archive_service
         self._review_store = review_store
+        self._evidence_promoter = evidence_promoter
 
     @property
     def review_store(self) -> ReviewStore:
@@ -93,21 +96,40 @@ class ProductionReviewCompletionCoordinator:
             snapshot = ReviewInputSnapshot(episode, outcome_tuple, fact_envelopes or {})
             input_hash = compute_input_snapshot_hash(episode, outcome_tuple, fact_envelopes or {})
             run_id = f"run:production:{input_hash.removeprefix('sha256:')}"
-            run = review_episode(
-                episode,
-                outcome_tuple,
-                self._review_store,
-                fact_envelopes=fact_envelopes,
-                deterministic_engine=deterministic_engine,
-                model_engine=model_engine,
-                review_run_id=run_id,
-                created_at=episode.finalized_at or episode.last_activity_at,
-            )
+            # Finding IDs are intentionally fresh P1 candidate identities.
+            # A completed production Run, however, is immutable.  Reuse the
+            # exact prior Run for the same frozen snapshot instead of asking an
+            # engine to create a conflicting second candidate set.
+            run = self._review_store.get_review_run(run_id)
+            if run is not None:
+                if run.episode_id != episode.episode_id or run.input_snapshot_hash != input_hash:
+                    raise HistoricalArchiveWiringError("production ReviewRun identity conflicts with frozen input")
+            else:
+                run = review_episode(
+                    episode,
+                    outcome_tuple,
+                    self._review_store,
+                    fact_envelopes=fact_envelopes,
+                    deterministic_engine=deterministic_engine,
+                    model_engine=model_engine,
+                    review_run_id=run_id,
+                    created_at=episode.finalized_at or episode.last_activity_at,
+                )
             if run is None:
                 return None
             # This is the only production completion trigger.  The archive
             # service commits P2 before selecting/recording P2r0 facts.
-            self._archive_service.archive_review_run(run, snapshot)
+            archive = self._archive_service.archive_review_run(run, snapshot)
+            # Promotion is deliberately downstream of both durable P2 Run and
+            # P2r0 archive commits.  Its failure is observational only and
+            # never rolls back an ordinary completion or chat behavior.
+            if archive is not None and self._evidence_promoter is not None:
+                promote = getattr(self._evidence_promoter, "promote_completed_review", None)
+                if callable(promote):
+                    try:
+                        promote(run, snapshot)
+                    except Exception:
+                        logger.exception("P2r.1 production promotion failed closed")
             return run
         except Exception as exc:  # noqa: BLE001 - background review is fail-closed
             logger.warning("Production Review completion failed: %s", exc)

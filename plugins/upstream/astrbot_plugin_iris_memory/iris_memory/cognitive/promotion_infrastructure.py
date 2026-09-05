@@ -1,27 +1,26 @@
 """P2a.2 immutable promotion infrastructure.
 
-This module deliberately contains *no* production semantic promotion rule.
-It archives exact P1 review inputs, gives P2 artifacts deterministic canonical
-identities, and provides append-only structural replay.  Production promotion
-is permanently reject-all for P2a v1; the synthetic writer exists only for
-isolated contract tests and cannot share a persistence root with production.
+This module archives exact P1 review inputs, gives P2 artifacts deterministic
+canonical identities, and provides append-only structural replay.  It does not
+evaluate semantics.  Production persistence remains closed unless an exact,
+separately frozen rule is enabled by runtime composition.
 """
 
 from __future__ import annotations
 
 import base64
-from collections.abc import Mapping as ABCMapping
-from dataclasses import dataclass, fields as dataclass_fields, is_dataclass, replace
-from datetime import datetime, timezone
-from enum import Enum
 import hashlib
 import json
 import math
 import os
-from pathlib import Path
 import re
-from types import UnionType
-from types import MappingProxyType
+from collections.abc import Mapping as ABCMapping
+from dataclasses import dataclass, is_dataclass, replace
+from dataclasses import fields as dataclass_fields
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from types import MappingProxyType, UnionType
 from typing import Any, Mapping, Union, get_args, get_origin, get_type_hints
 
 from .review import (
@@ -65,6 +64,10 @@ _P2_TRANSACTION_SCHEMA = "p2a.persistence-transaction.v1"
 COMMIT_OUTCOME_INDETERMINATE = "COMMIT_OUTCOME_INDETERMINATE"
 PRODUCTION_RULE_DISABLED = "PRODUCTION_RULE_DISABLED"
 NOT_P2_VALID = "NOT_P2_VALID"
+EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1 = (
+    "EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1"
+)
+_P2R1_PRODUCTION_RULES = frozenset({EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1})
 
 
 class CanonicalHashV1:
@@ -361,8 +364,13 @@ class P2CanonicalArtifactEncoderV1:
 
     def _encode(self, value: object) -> dict[str, object]:
         from .review import (
-            AttributionTargetType, EvidenceKind, EvidenceSourceType, FindingType,
-            InterpretationProducer, ReviewDimension, ReviewStatus,
+            AttributionTargetType,
+            EvidenceKind,
+            EvidenceSourceType,
+            FindingType,
+            InterpretationProducer,
+            ReviewDimension,
+            ReviewStatus,
         )
 
         if type(value) is ReviewEvidenceRef:
@@ -654,13 +662,25 @@ class PromotionGateDecision:
 
 
 class ProductionPromotionGateV1:
-    """Frozen reject-all production gate.  It is intentionally not configurable."""
+    """Closed, exact-rule gate for an explicitly composed production writer.
 
-    enabled_rules = frozenset()
+    The gate deliberately accepts neither wildcards nor arbitrary rule names.
+    A normal construction has no enabled rules; runtime composition must opt
+    into the one frozen P2r.1 identifier.
+    """
+
+    def __init__(self, *, enable_explicit_correction_rule: bool = False) -> None:
+        if type(enable_explicit_correction_rule) is not bool:
+            raise PromotionInfrastructureIntegrityError("production rule enablement must be a bool")
+        self.enabled_rules = (
+            _P2R1_PRODUCTION_RULES if enable_explicit_correction_rule else frozenset()
+        )
 
     def evaluate(self, command: PromotionCommand) -> PromotionGateDecision:
         if type(command) is not PromotionCommand:
             raise PromotionInfrastructureIntegrityError("PromotionCommand shape is invalid")
+        if command.requested_rule_id in self.enabled_rules:
+            return PromotionGateDecision(True, "ACCEPTED_EXACT_RULE")
         return PromotionGateDecision(False, PRODUCTION_RULE_DISABLED)
 
 
@@ -820,7 +840,13 @@ def _decode_proposition(payload: object) -> LocalEvidenceProposition:
 
 
 def _decode_finding(payload: object) -> ReviewFinding:
-    from .review import CausalAttribution, Confidence, FindingType, InterpretationProducer, ReviewDimension
+    from .review import (
+        CausalAttribution,
+        Confidence,
+        FindingType,
+        InterpretationProducer,
+        ReviewDimension,
+    )
 
     fields = _strict_envelope(payload, "ReviewFinding")
     try:
@@ -859,7 +885,12 @@ def _decode_run(payload: object) -> ReviewRun:
 
 
 def _decode_evidence(payload: object) -> ReviewEvidence:
-    from .review import CausalAttribution, Confidence, InterpretationProducer, ReviewDimension
+    from .review import (
+        CausalAttribution,
+        Confidence,
+        InterpretationProducer,
+        ReviewDimension,
+    )
 
     fields = _strict_envelope(payload, "ReviewEvidence")
     try:
@@ -1448,7 +1479,7 @@ class P2PromotionStore:
         elif operation == P2_REVIEW_RUN_WITH_SNAPSHOT:
             self._apply_run_commit(payload)
         elif operation == P2_PROMOTED_EVIDENCE_COMMIT:
-            if not self._synthetic_enabled:
+            if self.root != "production" and not self._synthetic_enabled:
                 raise PromotionInfrastructureIntegrityError(PRODUCTION_RULE_DISABLED)
             self._apply_evidence_commit(payload)
         else:
@@ -1555,13 +1586,22 @@ class P2PromotionStore:
         profile = self._profile_objects[profile_hash]
         encoder = P2CanonicalArtifactEncoderV1(profile)
         authoritative_evidence = _decode_evidence(fields["evidence"])
+        if (
+            self.root == "production"
+            and (
+                authoritative_evidence.producer
+                != EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1
+                or f"rule:{EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1}"
+                not in authoritative_evidence.provenance
+            )
+        ):
+            raise PromotionInfrastructureIntegrityError(PRODUCTION_RULE_DISABLED)
         if CanonicalHashV1.canonical_json_utf8(encoder.encode(authoritative_evidence)) != CanonicalHashV1.canonical_json_utf8(fields["evidence"]):
             raise PromotionInfrastructureIntegrityError("ReviewEvidence is not canonical under exact historical profile")
         archived_run_commit = self._run_commits.get(evidence["source_review_run_id"])
         if archived_run_commit is None:
             raise PromotionInfrastructureIntegrityError("evidence commit references a Run without exact P2 archive")
         archived_run_commit_fields = self._fields(archived_run_commit, "P2ReviewRunWithSnapshotV1")
-        archived_run = self._fields(archived_run_commit_fields["run"], "ReviewRun")
         authoritative_run = _decode_run(archived_run_commit_fields["run"])
         if archived_run_commit_fields["encoding_profile_hash"] != profile_hash:
             raise PromotionInfrastructureIntegrityError("evidence/run encoding profile lineage mismatch")
@@ -1616,6 +1656,40 @@ class P2PromotionStore:
         self._record_transaction(P2_REVIEW_RUN_WITH_SNAPSHOT, payload)
         return commit
 
+    def _record_enabled_production_candidate(
+        self,
+        candidate: SyntheticPromotionCandidateV1,
+        encoder: P2CanonicalArtifactEncoderV1,
+        gate: ProductionPromotionGateV1,
+        *,
+        rule_id: str,
+    ) -> P2PromotedEvidenceCommitV1:
+        """Persist one candidate only through an enabled exact production rule.
+
+        This intentionally remains an internal composition primitive.  It is
+        not a generic public evidence writer: the rule owner must establish
+        the factual/semantic joins before calling it.
+        """
+        if (
+            self.root != "production"
+            or self._synthetic_enabled
+            or type(candidate) is not SyntheticPromotionCandidateV1
+            or type(encoder) is not P2CanonicalArtifactEncoderV1
+            or type(gate) is not ProductionPromotionGateV1
+            or rule_id not in _P2R1_PRODUCTION_RULES
+            or candidate.evidence.producer != rule_id
+        ):
+            raise PromotionInfrastructureIntegrityError(PRODUCTION_RULE_DISABLED)
+        decision = gate.evaluate(PromotionCommand(candidate.finding.finding_id, rule_id))
+        if not decision.accepted:
+            raise PromotionInfrastructureIntegrityError(PRODUCTION_RULE_DISABLED)
+        commit = _materialize_synthetic_commit(candidate, encoder)
+        if encoder.profile_hash not in self._profiles or commit.encoding_profile_hash != encoder.profile_hash:
+            raise PromotionInfrastructureIntegrityError("production commit profile is unavailable")
+        commit.validate(encoder)
+        self._record_transaction(P2_PROMOTED_EVIDENCE_COMMIT, encoder.encode(commit))
+        return commit
+
     def require_archive(self, run: ReviewRun) -> Mapping[str, object]:
         record = self._run_commits.get(run.review_run_id)
         if record is None:
@@ -1657,7 +1731,7 @@ class SyntheticP2PromotionStore(P2PromotionStore):
 
 
 class P2ValidatedEvidenceReader:
-    """Structural reader whose P2a v1 production result is intentionally empty."""
+    """Read durably committed production Evidence, never raw candidates."""
 
     def __init__(self, store: P2PromotionStore) -> None:
         if type(store) not in (P2PromotionStore, SyntheticP2PromotionStore):
@@ -1665,10 +1739,16 @@ class P2ValidatedEvidenceReader:
         self._store = store
 
     def validated_evidence(self) -> tuple[ReviewEvidence, ...]:
-        # Reading a test store is never production authority.  Reading a
-        # production store with structurally perfect records is also never
-        # authority because P2a v1 has no enabled production rule.
-        return ()
+        if self._store.root != "production":
+            return ()
+        decoded: list[ReviewEvidence] = []
+        for payload in self._store.evidence_commits:
+            fields = self._store._fields(payload, "P2PromotedEvidenceCommitV1")
+            evidence = _decode_evidence(fields["evidence"])
+            if evidence.producer not in _P2R1_PRODUCTION_RULES:
+                raise PromotionInfrastructureIntegrityError("unknown production Evidence rule")
+            decoded.append(evidence)
+        return tuple(decoded)
 
     def status_for_raw_evidence(self, evidence: ReviewEvidence) -> str:
         if type(evidence) is not ReviewEvidence:

@@ -22,8 +22,10 @@ from .outcome import OutcomeExplicitness, OutcomeKind
 from .promotion_infrastructure import (
     CanonicalHashV1,
     P2CanonicalArtifactEncoderV1,
+    P2PromotedEvidenceCommitV1,
     P2PromotionStore,
     P2ReviewRunWithSnapshotV1,
+    ProductionPromotionGateV1,
     PromotionSnapshotArchiveV1,
     SyntheticPromotionCandidateV1,
     _decode_run,
@@ -98,6 +100,84 @@ class ExplicitCorrectionPromotionCandidateV1:
     @property
     def finding(self) -> ReviewFinding:
         return self.synthetic_candidate.finding
+
+
+class ExplicitCorrectionProductionPromoterV1:
+    """Persist only P2r.1's exact-rule candidates after production Review.
+
+    It is intentionally a narrow composition owner, not a general evidence
+    API: candidate construction re-runs every frozen factual/semantic join,
+    and the P2 store receives the result only after the exact gate accepts the
+    sole P2r.1 rule identifier.
+    """
+
+    owner = "P2r.1 Explicit Correction Production Promotion"
+
+    def __init__(
+        self,
+        p2_store: P2PromotionStore,
+        p2r0_store: P2r0Store,
+        semantic_store: InboundSemanticActAuthorityStoreV1,
+    ) -> None:
+        if (
+            type(p2_store) is not P2PromotionStore
+            or p2_store.root != "production"
+            or p2_store._synthetic_enabled
+            or type(p2r0_store) is not P2r0Store
+            or type(semantic_store) is not InboundSemanticActAuthorityStoreV1
+        ):
+            raise ExplicitCorrectionRuleIntegrityError("production promoter requires exact authority stores")
+        self._p2_store = p2_store
+        self._p2r0_store = p2r0_store
+        self._semantic_store = semantic_store
+        self._gate = ProductionPromotionGateV1(enable_explicit_correction_rule=True)
+
+    @property
+    def enabled_rules(self) -> frozenset[str]:
+        return self._gate.enabled_rules
+
+    def promote_completed_review(
+        self,
+        run: ReviewRun,
+        snapshot: ReviewInputSnapshot,
+    ) -> tuple[P2PromotedEvidenceCommitV1, ...]:
+        """Persist exact eligible findings, returning no artifact on ambiguity.
+
+        This method does not call a model, infer reply relationships, or
+        promote caller-owned Findings.  The public completion owner calls it
+        only after the Run/snapshot and P2r0 archive have committed.
+        """
+        if type(run) is not ReviewRun or type(snapshot) is not ReviewInputSnapshot:
+            return ()
+        commits: list[P2PromotedEvidenceCommitV1] = []
+        for finding in run.findings:
+            candidate = build_explicit_correction_candidate(
+                run,
+                snapshot,
+                finding,
+                p2_store=self._p2_store,
+                p2r0_store=self._p2r0_store,
+                semantic_store=self._semantic_store,
+            )
+            if candidate is None:
+                continue
+            profile = self._p2_store._profile_objects.get(
+                candidate.synthetic_candidate.encoding_profile_hash
+            )
+            if profile is None:
+                continue
+            try:
+                commit = self._p2_store._record_enabled_production_candidate(
+                    candidate.synthetic_candidate,
+                    P2CanonicalArtifactEncoderV1(profile),
+                    self._gate,
+                    rule_id=RULE_ID,
+                )
+            except Exception:  # noqa: BLE001 - any unavailable authority is no Evidence
+                commit = None
+            if commit is not None:
+                commits.append(commit)
+        return tuple(commits)
 
 
 def _authoritative_p2_run(
@@ -359,9 +439,8 @@ def build_explicit_correction_candidate(
 ) -> ExplicitCorrectionPromotionCandidateV1 | None:
     """Return one candidate, or ``None`` for every ambiguous/invalid join.
 
-    The function is intentionally not wired into ``review_episode`` or any
-    production store.  A future contract may feed this candidate to the
-    existing isolated synthetic writer after an explicit production decision.
+    The function itself is a pure, no-model candidate builder.  Production
+    persistence is owned separately by ``ExplicitCorrectionProductionPromoterV1``.
     """
 
     try:
@@ -383,6 +462,7 @@ evaluate_explicit_correction_rule = build_explicit_correction_candidate
 __all__ = [
     "RULE_ID",
     "RULE_STATEMENT",
+    "ExplicitCorrectionProductionPromoterV1",
     "ExplicitCorrectionPromotionCandidateV1",
     "ExplicitCorrectionRuleIntegrityError",
     "build_explicit_correction_candidate",

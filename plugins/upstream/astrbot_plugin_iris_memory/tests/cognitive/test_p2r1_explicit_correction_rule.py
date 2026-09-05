@@ -29,6 +29,7 @@ from iris_memory.cognitive.episode import (
 from iris_memory.cognitive.explicit_correction_rule import (
     RULE_ID,
     RULE_STATEMENT,
+    ExplicitCorrectionProductionPromoterV1,
     build_explicit_correction_candidate,
 )
 from iris_memory.cognitive.inbound_semantic_authority import (
@@ -43,10 +44,14 @@ from iris_memory.cognitive.outcome import (
 )
 from iris_memory.cognitive.promotion_infrastructure import (
     P2PromotionStore,
+    P2ValidatedEvidenceReader,
     ProductionPromotionGateV1,
     PromotionCommand,
 )
-from iris_memory.cognitive.reply_link_archive import P2r0HistoricalArchiveService
+from iris_memory.cognitive.reply_link_archive import (
+    P2r0HistoricalArchiveService,
+    ProductionReviewCompletionCoordinator,
+)
 from iris_memory.cognitive.reply_link_authority import (
     HostOutputMessageIdentityFactV1,
     InboundReplyReferenceFactV1,
@@ -72,6 +77,7 @@ from iris_memory.cognitive.review_service import (
     ReviewInputSnapshot,
     compute_input_snapshot_hash,
 )
+from iris_memory.cognitive.review_store import AppendOnlyReviewStore
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -264,6 +270,8 @@ def _fixture(
         )
     return {
         "episode": episode,
+        "host_ref": host_ref,
+        "record": record,
         "observation": observation,
         "snapshot": snapshot,
         "finding": finding,
@@ -418,9 +426,71 @@ def test_rule_is_deterministic_and_does_not_call_provider(tmp_path: Path):
     assert fixture["p2"].evidence_commits == ()
 
 
-def test_production_promotion_remains_disabled(tmp_path: Path):
+def test_production_promotion_stays_closed_without_exact_runtime_enablement(tmp_path: Path):
     fixture = _fixture(tmp_path)
     assert _candidate(fixture) is not None
     decision = ProductionPromotionGateV1().evaluate(PromotionCommand("finding:rule", RULE_ID))
     assert not decision.accepted
     assert fixture["p2"].evidence_commits == ()
+
+
+def test_enabled_exact_rule_persists_one_idempotent_production_evidence(tmp_path: Path):
+    fixture = _fixture(tmp_path)
+    promoter = ExplicitCorrectionProductionPromoterV1(
+        fixture["p2"], fixture["p2r0"], fixture["semantic_store"]
+    )
+
+    first = promoter.promote_completed_review(fixture["run"], fixture["snapshot"])
+    second = promoter.promote_completed_review(fixture["run"], fixture["snapshot"])
+
+    assert promoter.enabled_rules == frozenset({RULE_ID})
+    assert len(first) == len(second) == 1
+    assert first[0].evidence.evidence_id == second[0].evidence.evidence_id
+    assert len(fixture["p2"].evidence_commits) == 1
+    validated = P2ValidatedEvidenceReader(fixture["p2"]).validated_evidence()
+    assert tuple(item.evidence_id for item in validated) == (first[0].evidence.evidence_id,)
+
+
+@pytest.mark.parametrize("decision", ["NO_MATCH", "ABSTAIN"])
+def test_enabled_rule_does_not_persist_nonmatching_semantic_authority(
+    tmp_path: Path, decision: str
+):
+    fixture = _fixture(tmp_path, decision=decision)
+    promoter = ExplicitCorrectionProductionPromoterV1(
+        fixture["p2"], fixture["p2r0"], fixture["semantic_store"]
+    )
+
+    assert promoter.promote_completed_review(fixture["run"], fixture["snapshot"]) == ()
+    assert fixture["p2"].evidence_commits == ()
+
+
+def test_production_completion_promotes_only_after_run_and_archive_commit(tmp_path: Path):
+    fixture = _fixture(tmp_path)
+    promoter = ExplicitCorrectionProductionPromoterV1(
+        fixture["p2"], fixture["p2r0"], fixture["semantic_store"]
+    )
+    coordinator = ProductionReviewCompletionCoordinator(
+        P2r0HistoricalArchiveService(fixture["p2"], fixture["p2r0"]),
+        AppendOnlyReviewStore(tmp_path / "production-reviews.jsonl"),
+        evidence_promoter=promoter,
+    )
+    fact_envelopes = {
+        (EvidenceSourceType.HOST_RESULT, fixture["host_ref"].ref_id): fixture["record"],
+    }
+
+    first = coordinator.complete_episode(
+        fixture["episode"],
+        (fixture["observation"],),
+        fact_envelopes=fact_envelopes,
+    )
+    second = coordinator.complete_episode(
+        fixture["episode"],
+        (fixture["observation"],),
+        fact_envelopes=fact_envelopes,
+    )
+
+    assert first is not None and second is not None
+    assert first.review_run_id == second.review_run_id
+    validated = P2ValidatedEvidenceReader(fixture["p2"]).validated_evidence()
+    assert len(validated) == 1
+    assert validated[0].source_review_run_id == first.review_run_id

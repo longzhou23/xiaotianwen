@@ -41,10 +41,14 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.message import TextPart
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
+
 from iris_memory.cognitive.contracts import EventExecutionContext, RuntimeMode
 from iris_memory.cognitive.episode import EpisodeState
 from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
 from iris_memory.cognitive.episode_store import AppendOnlyEpisodeStore
+from iris_memory.cognitive.explicit_correction_rule import (
+    ExplicitCorrectionProductionPromoterV1,
+)
 from iris_memory.cognitive.iris_adapter import get_cognitive_runtime
 from iris_memory.cognitive.legacy_proactive import LegacyIrisProactiveSignalAdapter
 from iris_memory.cognitive.reply_link_archive import (
@@ -236,6 +240,7 @@ class IrisMemoryPlugin(Star):
             self._inbound_semantic_authority = None
             self._p2r0_archive = None
             self._production_review_completion = None
+            self._production_review_evidence_enabled = False
             self._semantic_evaluator: BoundedSemanticEvaluatorWorkerV1 | None = None
             self._production_semantic_evaluator: str | None = None
             self._semantic_evaluator_requested = False
@@ -421,14 +426,51 @@ class IrisMemoryPlugin(Star):
             review_dir = Path(self.data_dir) / "cognitive" / "reviews"
             review_dir.mkdir(parents=True, exist_ok=True)
             review_store = AppendOnlyReviewStore(review_dir / "reviews.jsonl")
+            evidence_promoter = self._create_production_evidence_promoter()
             self._production_review_completion = ProductionReviewCompletionCoordinator(
-                self._p2r0_archive, review_store
+                self._p2r0_archive,
+                review_store,
+                evidence_promoter=evidence_promoter,
             )
-            logger.info("P2r0 historical archive wiring enabled")
+            logger.info(
+                "P2r0 historical archive wiring enabled; P2r.1 evidence promotion=%s",
+                self._production_review_evidence_enabled,
+            )
         except Exception:
             logger.exception(
                 "P2r0 historical archive wiring initialization failed; archive remains unavailable"
             )
+
+    def _create_production_evidence_promoter(self):
+        """Explicitly compose the sole frozen production rule, or fail closed.
+
+        This is a runtime configuration boundary, never a provider/default
+        fallback.  A missing evaluator, factual store, or exact boolean keeps
+        the ordinary Review/archive path running with zero new Evidence.
+        """
+        self._production_review_evidence_enabled = False
+        enabled = self.config.get(
+            "review_evidence_promotion.enable_explicit_correction_exact_host_output",
+            False,
+        )
+        if type(enabled) is not bool or not enabled:
+            return None
+        archive = self._p2r0_archive
+        worker = self._semantic_evaluator
+        if archive is None or worker is None:
+            logger.error("P2r.1 evidence promotion disabled: exact authority dependencies are unavailable")
+            return None
+        try:
+            promoter = ExplicitCorrectionProductionPromoterV1(
+                archive.p2_store,
+                archive.p2r0_store,
+                worker.authority_service.store,
+            )
+        except Exception:
+            logger.exception("P2r.1 evidence promotion disabled during authority composition")
+            return None
+        self._production_review_evidence_enabled = True
+        return promoter
 
     def archive_review_run(self, run: object, snapshot: object):
         """Explicitly archive a completed ReviewRun without touching Preview.

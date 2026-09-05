@@ -343,7 +343,7 @@
   "semantic_evaluator": {
     "type": "object",
     "description": "入站语义观察器",
-    "hint": "仅在明确绑定冻结 Provider 时启用显式纠错语义观察；不产生 ReviewEvidence，也不改变机器人行为",
+    "hint": "仅在明确绑定冻结 Provider 时启用显式纠错语义观察；自身不产生 ReviewEvidence，也不改变机器人行为",
     "items": {
       "enable": {
         "type": "bool",
@@ -356,6 +356,19 @@
         "default": "",
         "description": "显式纠错语义 Provider ID",
         "hint": "必须填写 chatgpt_codex_source/gpt-5.6-luna；不会回退到默认 Provider"
+      }
+    }
+  },
+  "review_evidence_promotion": {
+    "type": "object",
+    "description": "ReviewEvidence 生产提升",
+    "hint": "只允许已冻结的精确规则；关闭时 Review 与历史归档仍正常运行，且不写入 ReviewEvidence",
+    "items": {
+      "enable_explicit_correction_exact_host_output": {
+        "type": "bool",
+        "default": false,
+        "description": "启用精确 Host 回复的显式纠错观察证据",
+        "hint": "仅启用 EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1；要求已提交的精确 Finding、Outcome、语义 MATCH、入站事实、Host 事实与回复链。不会启用其他规则，也不会改变机器人行为"
       }
     }
   },
