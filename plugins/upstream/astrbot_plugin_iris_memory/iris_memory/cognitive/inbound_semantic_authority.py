@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import json
 import math
 import os
@@ -732,6 +733,61 @@ class InboundSemanticActAuthorityServiceV1:
             provenance=("inbound_fact_committed", "capture_time_evaluation"),
         )
         return self.store.record_authority(authority, profile=self.profile)
+
+    async def evaluate_detached_input(
+        self,
+        evaluator_input: InboundSemanticEvaluationInputV1,
+    ) -> InboundSemanticActAuthorityV1:
+        """Evaluate one exact detached input through the bound evaluator.
+
+        Callers provide only the immutable input.  The decision is obtained
+        here from the evaluator bound at service construction and is never
+        accepted as a caller-supplied persistence argument.
+        """
+        if type(evaluator_input) is not InboundSemanticEvaluationInputV1:
+            raise InboundSemanticAuthorityIntegrityError("expected semantic evaluation input")
+        if self.evaluator is None or self.profile is None:
+            raise InboundSemanticAuthorityIntegrityError("semantic evaluator is unavailable")
+        if evaluator_input.evaluator_profile_id != self.profile.profile_id:
+            raise InboundSemanticAuthorityIntegrityError("semantic input profile identity mismatch")
+        if evaluator_input.evaluator_profile_hash != self.profile.profile_payload_hash:
+            raise InboundSemanticAuthorityIntegrityError("semantic input profile hash mismatch")
+        evaluate = getattr(self.evaluator, "evaluate", None)
+        evaluate = evaluate if callable(evaluate) else self.evaluator
+        if not callable(evaluate):
+            raise InboundSemanticAuthorityIntegrityError("semantic evaluator is unavailable")
+        try:
+            result = evaluate(evaluator_input)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception as exc:
+            raise InboundSemanticAuthorityIntegrityError("semantic evaluator failed") from exc
+        decision = self._decode_decision(result)
+        authority = InboundSemanticActAuthorityV1.create(
+            source_event_id=evaluator_input.source_event_id,
+            source_platform_message_identity=evaluator_input.source_platform_message_identity,
+            inbound_reply_fact_id=evaluator_input.inbound_reply_fact_id,
+            content_payload_hash=evaluator_input.content_payload_hash,
+            semantic_kind=evaluator_input.semantic_kind,
+            decision=decision,
+            evaluator_profile_id=self.profile.profile_id,
+            evaluator_profile_hash=self.profile.profile_payload_hash,
+            evaluator_input_payload_hash=evaluator_input.evaluator_input_payload_hash,
+            producer=self.profile.evaluator_kind,
+            provenance=("inbound_fact_committed", "capture_time_evaluation"),
+        )
+        return self.store.record_authority(authority, profile=self.profile)
+
+    def record_detached_evaluation(
+        self,
+        evaluator_input: InboundSemanticEvaluationInputV1,
+        result: object,
+    ) -> None:
+        """Deprecated compatibility surface; direct decision injection is disabled."""
+        del evaluator_input, result
+        raise InboundSemanticAuthorityIntegrityError(
+            "direct detached decision persistence is disabled"
+        )
 
     @staticmethod
     def _decode_decision(result: object) -> InboundSemanticDecision:
