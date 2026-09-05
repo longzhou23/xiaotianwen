@@ -241,6 +241,152 @@ def test_demo_cases_are_memory_only_and_cover_rejected_unattached_fact():
     assert unattached["detail"]["rejection"]["status"] == "REJECTED"
 
 
+def test_summary_projects_authoritative_review_store_and_effective_runtime_state():
+    store, episode, outcomes, records = _fixture()
+    review_store = InMemoryReviewStore()
+    facts = {(EvidenceSourceType.HOST_RESULT, ref_id): record for ref_id, record in records.items()}
+    run = review_episode(episode, outcomes, review_store, fact_envelopes=facts)
+    service = P1ObservatoryService(
+        store,
+        review_store,
+        records,
+        p2r0_store=SimpleNamespace(archives=()),
+        runtime_state={
+            "lifecycle_enabled": True,
+            "review_enabled": True,
+            "promotion_enabled": True,
+            "promotion_rules": ("EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1",),
+            "semantic_evaluator": "EXPLICIT_CORRECTION_V1",
+            "p2b_enabled": False,
+        },
+    )
+
+    summary = service.summary()
+    assert run is not None
+    assert summary["phase"] == "P2l.1"
+    assert summary["review_runs"] == 1
+    assert summary["review_findings"] == len(run.findings)
+    assert summary["review_evidence"] == 0
+    assert summary["review_run_count_source"] == "runtime_owned_persisted_review_store"
+    assert summary["finding_count_source"] == "runtime_owned_persisted_review_store"
+    assert summary["evidence_count_source"] == "runtime_owned_persisted_review_store"
+    assert summary["review"]["status"] == "ENABLED"
+    assert summary["promotion"]["enabled"] is True
+    assert summary["promotion"]["rules"] == ["EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1"]
+    assert summary["semantic_evaluator"] == "EXPLICIT_CORRECTION_V1"
+
+
+def test_summary_reports_unavailable_review_store_without_false_zero_counts():
+    store, _episode, _outcomes, _records = _fixture()
+
+    class BrokenReviewStore:
+        def list_review_runs_for_episode(self, _episode_id):
+            raise OSError("journal unavailable")
+
+        def list_evidence_for_episode(self, _episode_id):
+            raise OSError("journal unavailable")
+
+    summary = P1ObservatoryService(
+        store,
+        BrokenReviewStore(),
+        runtime_state={"review_enabled": True, "promotion_enabled": True},
+    ).summary()
+    assert summary["review_store"] == "UNAVAILABLE"
+    assert summary["review_runs"] == "Unavailable"
+    assert summary["review_findings"] == "Unavailable"
+    assert summary["review_evidence"] == "Unavailable"
+    assert summary["review_run_count_source"] == "Unavailable"
+    assert summary["review"]["status"] == "UNAVAILABLE"
+
+
+def test_episode_detail_projects_review_status_and_runtime_archive_presence():
+    store, episode, outcomes, records = _fixture()
+    review_store = InMemoryReviewStore()
+    facts = {(EvidenceSourceType.HOST_RESULT, ref_id): record for ref_id, record in records.items()}
+    run = review_episode(episode, outcomes, review_store, fact_envelopes=facts)
+    service = P1ObservatoryService(
+        store,
+        review_store,
+        records,
+        p2r0_store=SimpleNamespace(archives=()),
+        runtime_state={"review_enabled": True, "promotion_enabled": True},
+    )
+    detail = service.episode_detail(episode.episode_id)
+    assert run is not None
+    assert detail["review"]["status"] == "AVAILABLE"
+    assert len(detail["review"]["runs"]) == 1
+    assert detail["review"]["runs"][0]["review_run_id"] == run.review_run_id
+    assert detail["archive"] == {"available": True, "status": "AVAILABLE", "count": 0, "archives": []}
+    assert detail["human"]["review_storage"] == "AVAILABLE"
+
+
+def test_promotion_enabled_with_zero_evidence_is_not_projected_as_disabled():
+    store, _episode, _outcomes, _records = _fixture(outcome_kind=None)
+    summary = P1ObservatoryService(
+        store,
+        InMemoryReviewStore(),
+        runtime_state={
+            "review_enabled": True,
+            "promotion_enabled": True,
+            "promotion_rules": ("EXPLICIT_CORRECTION_OF_EXACT_HOST_OUTPUT_V1",),
+        },
+    ).summary()
+    assert summary["review_evidence"] == 0
+    assert summary["promotion"]["enabled"] is True
+    assert summary["promotion"]["status"] == "ENABLED"
+    assert summary["promotion"]["rule_count"] == 1
+
+
+def test_observatory_never_claims_p2b_behavioral_learning_enabled():
+    store, _episode, _outcomes, _records = _fixture(outcome_kind=None)
+    summary = P1ObservatoryService(store, runtime_state={"p2b_enabled": False}).summary()
+    assert summary["behavioral_learning"] == {
+        "enabled": False,
+        "status": "DISABLED",
+        "label": "P2b 尚未启用",
+    }
+
+
+def test_insufficient_review_run_is_visible_as_completed_review_artifact():
+    store, episode, outcomes, records = _fixture(outcome_kind=None)
+    review_store = InMemoryReviewStore()
+    facts = {(EvidenceSourceType.HOST_RESULT, ref_id): record for ref_id, record in records.items()}
+
+    class EmptyEngine:
+        def generate_findings(self, _episode, _outcomes, *, review_run_id):
+            return ()
+
+    run = review_episode(
+        episode,
+        outcomes,
+        review_store,
+        fact_envelopes=facts,
+        deterministic_engine=EmptyEngine(),
+    )
+    summary = P1ObservatoryService(
+        store,
+        review_store,
+        runtime_state={"review_enabled": True},
+    ).summary()
+    assert run is not None
+    assert run.status.value == "INSUFFICIENT_EVIDENCE"
+    assert summary["review_runs"] == 1
+    assert summary["review_status_counts"] == {"INSUFFICIENT_EVIDENCE": 1}
+    assert summary["review_evidence"] == 0
+
+
+def test_frontend_projects_runtime_status_and_does_not_show_stale_p1_gate_copy():
+    view = Path(__file__).parents[2] / "iris_memory" / "web" / "frontend" / "src" / "views" / "CognitiveObservatoryView.vue"
+    source = view.read_text(encoding="utf-8")
+    assert "phaseTitle" in source
+    assert "Production Cognitive Runtime" in source
+    assert "Behavioral Learning · DISABLED" in source
+    assert "P1 Experience &amp; Review Foundation" not in source
+    assert "P1 FOUNDATION · ACCEPTED" not in source
+    assert "P2b 尚未开始" in source
+    assert "Unavailable" in source
+
+
 class _Context:
     def __init__(self): self.routes = []
     def register_web_api(self, path, handler, methods, desc): self.routes.append((path, handler, methods))

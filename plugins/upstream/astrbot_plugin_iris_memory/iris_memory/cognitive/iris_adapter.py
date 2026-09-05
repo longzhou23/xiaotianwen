@@ -292,6 +292,18 @@ class CognitiveRuntime:
         self._experiences: dict[str, CanonicalExperience] = {}
         self.episode_observer = episode_observer
         self.execution_observatory = execution_observatory or ExecutionRecordObservatory()
+        # Read-only observatory projections are bound by the plugin composition
+        # root once the durable production stores are ready.  They are kept on
+        # the shared runtime solely so the web route can reuse the exact store
+        # instances owned by production; they are never cognitive authorities.
+        self.observatory_review_store: Any | None = None
+        self.observatory_p2r0_store: Any | None = None
+        self.observatory_lifecycle_enabled = False
+        self.observatory_review_enabled = False
+        self.observatory_promotion_enabled = False
+        self.observatory_promotion_rules: tuple[str, ...] = ()
+        self.observatory_semantic_evaluator: str | None = None
+        self.observatory_p2b_enabled = False
 
     def run_behavior(
         self,

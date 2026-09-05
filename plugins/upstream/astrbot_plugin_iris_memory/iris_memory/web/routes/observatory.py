@@ -15,7 +15,17 @@ def get_observatory_service() -> P1ObservatoryService:
     observer = runtime.episode_observer
     return P1ObservatoryService(
         getattr(observer, "store", None),
+        review_store=getattr(runtime, "observatory_review_store", None),
+        p2r0_store=getattr(runtime, "observatory_p2r0_store", None),
         execution_observatory=getattr(runtime, "execution_observatory", None),
+        runtime_state={
+            "lifecycle_enabled": getattr(runtime, "observatory_lifecycle_enabled", False),
+            "review_enabled": getattr(runtime, "observatory_review_enabled", False),
+            "promotion_enabled": getattr(runtime, "observatory_promotion_enabled", False),
+            "promotion_rules": getattr(runtime, "observatory_promotion_rules", ()),
+            "semantic_evaluator": getattr(runtime, "observatory_semantic_evaluator", None),
+            "p2b_enabled": getattr(runtime, "observatory_p2b_enabled", False),
+        },
     )
 
 

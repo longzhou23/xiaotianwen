@@ -58,8 +58,7 @@ class P1ObservatoryService:
     """Thin read model and non-persistent preview runner for the P1 UI."""
 
     PROMOTION_REASON = (
-        "当前 Review 可以形成可审计 Finding，但尚未冻结安全的 Evidence promotion contract，"
-        "因此不会自动形成长期学习证据。"
+        "Promotion 当前未接入有效的 production composition；观测台保持只读、fail-closed。"
     )
 
     def __init__(
@@ -68,9 +67,13 @@ class P1ObservatoryService:
         review_store: ReviewStore | None = None,
         execution_records: Mapping[str, BehaviorExecutionRecord] | None = None,
         execution_observatory: ExecutionRecordObservatory | None = None,
+        p2r0_store: Any | None = None,
+        runtime_state: Mapping[str, Any] | None = None,
     ) -> None:
         self._episode_store = episode_store
         self._review_store = review_store
+        self._p2r0_store = p2r0_store
+        self._runtime_state = dict(runtime_state or {})
         # A caller may inject immutable records for tests/demo integration.  The
         # production runtime currently does not expose this source, so absent
         # records are reported as unavailable rather than reconstructed.
@@ -88,24 +91,81 @@ class P1ObservatoryService:
         outcomes = self._episode_store.get_outcomes()
         runs: list[ReviewRun] = []
         evidence_count = 0
+        review_data_available = self._review_store is not None
+        review_error: str | None = None
         if self._review_store is not None:
-            for episode in episodes:
-                runs.extend(self._review_store.list_review_runs_for_episode(episode.episode_id))
-                evidence_count += len(self._review_store.list_evidence_for_episode(episode.episode_id))
+            try:
+                for episode in episodes:
+                    runs.extend(self._review_store.list_review_runs_for_episode(episode.episode_id))
+                    evidence_count += len(self._review_store.list_evidence_for_episode(episode.episode_id))
+            except Exception:
+                review_data_available = False
+                review_error = "review_store_unavailable"
+        promotion_enabled = self._state_bool("promotion_enabled")
+        lifecycle_enabled = self._state_bool("lifecycle_enabled")
+        review_enabled = self._state_bool("review_enabled")
+        rules = self._state_rules()
+        phase = "P2l.1" if lifecycle_enabled else "P2r.1" if promotion_enabled else "P1"
+        review_status = (
+            "UNAVAILABLE"
+            if not review_data_available
+            else "ENABLED"
+            if review_enabled
+            else "DISABLED"
+        )
+        review_runs_value: int | str = len(runs) if review_data_available else "Unavailable"
+        findings_value: int | str = sum(len(run.findings) for run in runs) if review_data_available else "Unavailable"
+        evidence_value: int | str = evidence_count if review_data_available else "Unavailable"
         return {
             "available": True,
+            "phase": phase,
             "episodes": len(episodes),
             "finalized_episodes": sum(e.state is EpisodeState.FINALIZED for e in episodes),
             "outcomes": len(outcomes),
-            "review_runs": len(runs),
-            "review_findings": sum(len(run.findings) for run in runs),
-            "review_evidence": evidence_count,
-            "review_store": "AVAILABLE" if self._review_store else "NOT_WIRED",
+            "review_runs": review_runs_value,
+            "review_findings": findings_value,
+            "review_evidence": evidence_value,
+            "review_store": "AVAILABLE" if review_data_available else "UNAVAILABLE",
+            "review_store_error": review_error,
+            "review_run_count_source": (
+                "runtime_owned_persisted_review_store" if review_data_available else "Unavailable"
+            ),
+            "finding_count_source": (
+                "runtime_owned_persisted_review_store" if review_data_available else "Unavailable"
+            ),
+            "evidence_count_source": (
+                "runtime_owned_persisted_review_store" if review_data_available else "Unavailable"
+            ),
+            "review_status_counts": (
+                {status.value: sum(run.status is status for run in runs) for status in {run.status for run in runs}}
+                if review_data_available
+                else None
+            ),
+            "lifecycle": {
+                "enabled": lifecycle_enabled,
+                "status": "ENABLED" if lifecycle_enabled else "DISABLED",
+            },
+            "review": {
+                "enabled": review_enabled,
+                "status": review_status,
+            },
             "preview_available": True,
             "promotion": {
-                "enabled": False,
-                "status": "DISABLED / FAIL-CLOSED",
-                "reason": self.PROMOTION_REASON,
+                "enabled": promotion_enabled,
+                "status": "ENABLED" if promotion_enabled else "DISABLED / FAIL-CLOSED",
+                "rules": list(rules),
+                "rule_count": len(rules),
+                "reason": (
+                    "当前尚无 ReviewFinding 满足生产唯一允许的明确纠正规则。"
+                    if promotion_enabled
+                    else self.PROMOTION_REASON
+                ),
+            },
+            "semantic_evaluator": self._runtime_state.get("semantic_evaluator"),
+            "behavioral_learning": {
+                "enabled": self._state_bool("p2b_enabled"),
+                "status": "ENABLED" if self._state_bool("p2b_enabled") else "DISABLED",
+                "label": "P2b 尚未启用",
             },
         }
 
@@ -138,6 +198,7 @@ class P1ObservatoryService:
         persisted = self._persisted_review(episode_id)
         snapshot = self.snapshot_debug_view(episode_id)
         attachments = self._attachment_views(episode, outcomes)
+        archive = self._persisted_archive(episode_id)
         return {
             "available": True,
             "episode": self._episode_view(episode),
@@ -145,11 +206,12 @@ class P1ObservatoryService:
             "timeline": self._timeline(episode, outcomes, persisted),
             "attachments": attachments,
             "review": persisted,
+            "archive": archive,
             "snapshot": snapshot,
             # Pure read-model projection for the default human-readable view.
             # It never becomes an Episode/Outcome/Review source of truth.
             "human": self._human_detail(episode, outcomes, persisted, snapshot, attachments),
-            "raw": {"episode": self._episode_view(episode), "outcomes": _json_value(outcomes), "review": persisted, "snapshot": snapshot},
+            "raw": {"episode": self._episode_view(episode), "outcomes": _json_value(outcomes), "review": persisted, "archive": archive, "snapshot": snapshot},
         }
 
     def persisted_review(self, episode_id: str) -> dict[str, Any]:
@@ -237,9 +299,31 @@ class P1ObservatoryService:
     def _persisted_review(self, episode_id: str) -> dict[str, Any]:
         if self._review_store is None:
             return {"available": False, "status": "NOT_WIRED", "runs": [], "evidence": []}
-        runs = self._review_store.list_review_runs_for_episode(episode_id)
-        evidence = self._review_store.list_evidence_for_episode(episode_id)
+        try:
+            runs = self._review_store.list_review_runs_for_episode(episode_id)
+            evidence = self._review_store.list_evidence_for_episode(episode_id)
+        except Exception:
+            return {"available": False, "status": "UNAVAILABLE", "runs": [], "evidence": []}
         return {"available": True, "status": "AVAILABLE" if runs else "NO_PERSISTED_REVIEW", "runs": _json_value(runs), "evidence": _json_value(evidence)}
+
+    def _persisted_archive(self, episode_id: str) -> dict[str, Any]:
+        """Project the runtime-owned P2r0 archive without opening another store."""
+        if self._p2r0_store is None:
+            return {"available": False, "status": "UNAVAILABLE", "count": "Unavailable", "archives": []}
+        try:
+            archives = tuple(item for item in self._p2r0_store.archives if item.episode_id == episode_id)
+        except Exception:
+            return {"available": False, "status": "UNAVAILABLE", "count": "Unavailable", "archives": []}
+        return {"available": True, "status": "AVAILABLE", "count": len(archives), "archives": _json_value(archives)}
+
+    def _state_bool(self, key: str) -> bool:
+        return self._runtime_state.get(key) is True
+
+    def _state_rules(self) -> tuple[str, ...]:
+        raw = self._runtime_state.get("promotion_rules", ())
+        if isinstance(raw, (tuple, list, frozenset, set)):
+            return tuple(item for item in raw if isinstance(item, str))
+        return ()
 
     def _attached_execution_facts(self, episode: Episode) -> tuple[dict[tuple[EvidenceSourceType, str], object], list[str]]:
         facts: dict[tuple[EvidenceSourceType, str], object] = {}
@@ -344,9 +428,8 @@ class P1ObservatoryService:
             "outcomes": len(outcomes),
         }
 
-    @classmethod
     def _human_detail(
-        cls,
+        self,
         episode: Episode,
         outcomes: tuple[OutcomeObservation, ...],
         review: Mapping[str, Any],
@@ -354,7 +437,7 @@ class P1ObservatoryService:
         attachments: list[Mapping[str, Any]],
     ) -> dict[str, Any]:
         """Project operational facts into labels for the simple UI view only."""
-        counts = cls._human_counts(episode, outcomes)
+        counts = self._human_counts(episode, outcomes)
         host_attachments = [item for item in attachments if item.get("source_type") == EvidenceSourceType.HOST_RESULT.value]
         verified = sum(item.get("status") == "ATTACHED" for item in host_attachments)
         unavailable = sum(item.get("status") == "UNAVAILABLE" for item in host_attachments)
@@ -367,6 +450,15 @@ class P1ObservatoryService:
         else:
             host_integrity = "PARTIAL"
         runs = review.get("runs", [])
+        review_storage = review.get("status")
+        review_runs_value: int | str = (
+            len(runs) if review_storage not in {"NOT_WIRED", "UNAVAILABLE"} else "Unavailable"
+        )
+        review_findings_value: int | str = (
+            sum(len(run.get("findings", [])) for run in runs)
+            if review_storage not in {"NOT_WIRED", "UNAVAILABLE"}
+            else "Unavailable"
+        )
         return {
             **counts,
             "shadow_observation": True,
@@ -378,11 +470,13 @@ class P1ObservatoryService:
             "snapshot_content_frozen": bool(snapshot.get("fact_deep_snapshotted")),
             "snapshot_payload_hashed": bool(snapshot.get("fact_payload_hashed")),
             "snapshot_attachment_enforced": snapshot.get("episode_attachment") == "ENFORCED",
-            "review_storage": "NOT_WIRED" if review.get("status") == "NOT_WIRED" else "AVAILABLE",
+            "review_storage": review_storage,
             "review_status": review.get("status"),
-            "review_runs": len(runs),
-            "review_findings": sum(len(run.get("findings", [])) for run in runs),
-            "promotion_enabled": False,
+            "review_runs": review_runs_value,
+            "review_findings": review_findings_value,
+            "promotion_enabled": self._state_bool("promotion_enabled"),
+            "promotion_rules": list(self._state_rules()),
+            "p2b_enabled": self._state_bool("p2b_enabled"),
         }
 
     @staticmethod
@@ -452,7 +546,8 @@ class P1ObservatoryService:
 
     @staticmethod
     def _unavailable_summary() -> dict[str, Any]:
-        return {"available": False, "reason": "episode_store_not_wired", "episodes": 0, "finalized_episodes": 0, "outcomes": 0, "review_runs": 0, "review_findings": 0, "review_evidence": 0, "review_store": "NOT_WIRED", "preview_available": False, "promotion": {"enabled": False, "status": "DISABLED / FAIL-CLOSED", "reason": P1ObservatoryService.PROMOTION_REASON}}
+        unavailable = "Unavailable"
+        return {"available": False, "reason": "episode_store_not_wired", "episodes": unavailable, "finalized_episodes": unavailable, "outcomes": unavailable, "review_runs": unavailable, "review_findings": unavailable, "review_evidence": unavailable, "review_store": "UNAVAILABLE", "review_run_count_source": unavailable, "finding_count_source": unavailable, "evidence_count_source": unavailable, "preview_available": False, "lifecycle": {"enabled": False, "status": "UNAVAILABLE"}, "review": {"enabled": False, "status": "UNAVAILABLE"}, "promotion": {"enabled": False, "status": "UNAVAILABLE", "rules": [], "rule_count": 0, "reason": "episode_store_not_wired"}, "behavioral_learning": {"enabled": False, "status": "DISABLED", "label": "P2b 尚未启用"}}
 
     def _demo_fixture(self, case_id: str) -> tuple[Episode, tuple[OutcomeObservation, ...], dict[str, BehaviorExecutionRecord]]:
         now = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)

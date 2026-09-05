@@ -49,6 +49,7 @@ from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
 from iris_memory.cognitive.episode_store import AppendOnlyEpisodeStore
 from iris_memory.cognitive.explicit_correction_rule import (
     ExplicitCorrectionProductionPromoterV1,
+    RULE_ID as EXPLICIT_CORRECTION_RULE_ID,
 )
 from iris_memory.cognitive.iris_adapter import get_cognitive_runtime
 from iris_memory.cognitive.legacy_proactive import LegacyIrisProactiveSignalAdapter
@@ -300,6 +301,7 @@ class IrisMemoryPlugin(Star):
             runtime.episode_observer = observer
             self._episode_store = store
             self._episode_observer = observer
+            self._sync_observatory_runtime_state()
             logger.info("Episode/Outcome Shadow observer enabled at %s", episodes_dir)
         except Exception:
             logger.exception(
@@ -436,10 +438,52 @@ class IrisMemoryPlugin(Star):
             review_dir.mkdir(parents=True, exist_ok=True)
             self._production_review_store = AppendOnlyReviewStore(review_dir / "reviews.jsonl")
             self._recompose_production_review_completion()
+            self._sync_observatory_runtime_state()
         except Exception:
+            self._sync_observatory_runtime_state()
             logger.exception(
                 "P2r0 historical archive wiring initialization failed; archive remains unavailable"
             )
+
+    def _sync_observatory_runtime_state(self) -> None:
+        """Publish read-only effective-state references for Observatory routes.
+
+        The Observatory must project the exact production-owned stores rather
+        than reopen a second journal or infer Review counts from Episodes.  The
+        references below are deliberately passive: no route can use them to
+        append cognitive state or alter production composition.
+        """
+        try:
+            runtime = get_cognitive_runtime()
+            runtime.observatory_review_store = self._production_review_store
+            runtime.observatory_p2r0_store = (
+                self._p2r0_archive.p2r0_store if self._p2r0_archive is not None else None
+            )
+            runtime.observatory_lifecycle_enabled = bool(
+                self.config.get("episode_lifecycle.auto_finalize", False)
+                and self._episode_lifecycle_owner is not None
+                and self._episode_lifecycle_owner.running
+            )
+            runtime.observatory_review_enabled = bool(
+                self._production_review_store is not None
+                and self._production_review_completion is not None
+            )
+            runtime.observatory_promotion_enabled = bool(
+                self._production_review_evidence_enabled
+            )
+            runtime.observatory_promotion_rules = (
+                (EXPLICIT_CORRECTION_RULE_ID,)
+                if runtime.observatory_promotion_enabled
+                else ()
+            )
+            runtime.observatory_semantic_evaluator = self._production_semantic_evaluator
+            # P2b is intentionally outside this Observatory's current
+            # authority surface; keep the status explicit and read-only.
+            runtime.observatory_p2b_enabled = False
+        except Exception:
+            # A missing observability projection must never affect cognition or
+            # plugin startup.  Routes will report unavailable state instead.
+            return
 
     def _init_episode_lifecycle_owner(self) -> None:
         """Compose the one lifecycle owner without enabling its task yet."""
@@ -461,12 +505,15 @@ class IrisMemoryPlugin(Star):
         enabled = self.config.get("episode_lifecycle.auto_finalize", False)
         owner = self._episode_lifecycle_owner
         if type(enabled) is not bool or not enabled or owner is None:
+            self._sync_observatory_runtime_state()
             logger.info("Episode lifecycle automatic finalization disabled by configuration")
             return
         try:
             await owner.start()
+            self._sync_observatory_runtime_state()
             logger.info("Episode lifecycle owner started (60-second bounded scan)")
         except Exception:
+            self._sync_observatory_runtime_state()
             logger.exception("Episode lifecycle owner failed to start; automatic finalization disabled")
 
     def _complete_finalized_episode_from_lifecycle(self, episode, outcomes):
@@ -503,6 +550,7 @@ class IrisMemoryPlugin(Star):
         )
         self._production_review_completion = coordinator
         self._production_review_evidence_enabled = evidence_promoter is not None
+        self._sync_observatory_runtime_state()
         logger.info(
             "P2r0 historical archive wiring enabled; P2r.1 evidence promotion=%s",
             self._production_review_evidence_enabled,
