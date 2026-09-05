@@ -54,6 +54,7 @@ class EpisodeStore(Protocol):
         *,
         reason: str,
         at: datetime | None = None,
+        preserve_last_activity: bool = False,
     ) -> Episode: ...
     def find_active_by_scope(self, scope_id: str) -> tuple[Episode, ...]: ...
     def find_episode_by_event_ref(self, ref_id: str) -> Episode | None: ...
@@ -243,6 +244,7 @@ class InMemoryEpisodeStore:
         *,
         reason: str,
         at: datetime | None = None,
+        preserve_last_activity: bool = False,
     ) -> Episode:
         ep = self._episodes.get(episode_id)
         if ep is None:
@@ -253,7 +255,11 @@ class InMemoryEpisodeStore:
         return replace(
             ep,
             state=new_state,
-            last_activity_at=max(ep.last_activity_at, now),
+            # State transitions are not necessarily genuine interaction.  The
+            # lifecycle owner and restart recovery preserve this factual clock
+            # so a durable inactivity/grace calculation cannot be reset by its
+            # own administrative transition.
+            last_activity_at=(ep.last_activity_at if preserve_last_activity else max(ep.last_activity_at, now)),
             soft_closed_at=now if new_state is EpisodeState.SOFT_CLOSED else ep.soft_closed_at,
             finalized_at=now if new_state is EpisodeState.FINALIZED else ep.finalized_at,
             revision=ep.revision + 1,
@@ -298,9 +304,11 @@ class InMemoryEpisodeStore:
         *,
         reason: str,
         at: datetime | None = None,
+        preserve_last_activity: bool = False,
     ) -> Episode:
         candidate = self._candidate_transition_state(
-            episode_id, new_state, reason=reason, at=at
+            episode_id, new_state, reason=reason, at=at,
+            preserve_last_activity=preserve_last_activity,
         )
         self._index_episode(candidate)
         return candidate
@@ -575,6 +583,7 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
                     ep.episode_id,
                     EpisodeState.INTERRUPTED,
                     reason="recovery_restart",
+                    preserve_last_activity=True,
                 )
 
     def create_episode(self, episode: Episode) -> Episode:
@@ -612,11 +621,13 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
         *,
         reason: str,
         at: datetime | None = None,
+        preserve_last_activity: bool = False,
     ) -> Episode:
         with self._journal_lock:
             self._ensure_writable()
             candidate = self._candidate_transition_state(
-                episode_id, new_state, reason=reason, at=at
+                episode_id, new_state, reason=reason, at=at,
+                preserve_last_activity=preserve_last_activity,
             )
             self._append_log("STATE_TRANSITIONED", candidate.episode_id, _episode_to_dict(candidate))
             try:

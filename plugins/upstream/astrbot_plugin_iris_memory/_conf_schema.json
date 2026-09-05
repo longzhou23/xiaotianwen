@@ -372,6 +372,19 @@
       }
     }
   },
+  "episode_lifecycle": {
+    "type": "object",
+    "description": "Episode 生命周期",
+    "hint": "默认关闭。启用后仅按冻结的 15 分钟 inactivity/grace 规则推进 Episode；不调用模型，也不改变机器人行为。",
+    "items": {
+      "auto_finalize": {
+        "type": "bool",
+        "default": false,
+        "description": "启用自动 Episode 生命周期推进",
+        "hint": "启动一个 60 秒的有界扫描任务；会把已静默 Episode 推进到 FINALIZED 并复用既有 Review/归档流程。默认关闭。"
+      }
+    }
+  },
   "proactive": {
     "type": "object",
     "description": "主动回复",

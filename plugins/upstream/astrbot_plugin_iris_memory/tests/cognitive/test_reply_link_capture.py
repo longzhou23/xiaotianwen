@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
 from iris_memory.cognitive import reply_link_capture as capture_module
 from iris_memory.cognitive.contracts import (
     BehaviorExecutionRecord,
     BehaviorTrace,
+    CanonicalExperience,
     DivergenceType,
+    EntityReference,
     GroundingEnforcement,
     HostResult,
     OutputProducer,
     OutputState,
+    Perspective,
+    ResolvedEvent,
     ShadowComparison,
     TraceStage,
     TriggerDecision,
@@ -57,11 +63,22 @@ class _Reply:
 
 
 class _Event:
-    def __init__(self, current, *, messages=None, message_id="in-1", group_id="group-1"):
+    def __init__(
+        self,
+        current,
+        *,
+        messages=None,
+        message_id="in-1",
+        group_id="group-1",
+        platform_id="napcat-instance-1",
+        account_id="bot-1",
+    ):
         self._current = current
         self._messages = list(messages or [])
         self.message_obj = SimpleNamespace(message_id=message_id)
         self._group_id = group_id
+        self._platform_id = platform_id
+        self._account_id = account_id
 
     def get_extra(self, key):
         return self._current if key == "iris_cognitive_execution_record" else None
@@ -70,10 +87,10 @@ class _Event:
         return self._messages
 
     def get_platform_id(self):
-        return "napcat-instance-1"
+        return self._platform_id
 
     def get_self_id(self):
-        return "bot-1"
+        return self._account_id
 
     def get_group_id(self):
         return self._group_id
@@ -379,3 +396,273 @@ def test_capture_without_store_is_not_constructible(tmp_path):
     runtime = CognitiveRuntime(record_traces=False)
     with pytest.raises(TypeError):
         capture_module.P2r0CaptureService(object(), runtime)
+
+
+_REPLY_USER = EntityReference(
+    "person:qq:user-1", "platform_uid", 1.0, ("qq:user-1",)
+)
+
+
+def _reply_experience(
+    event_id: str,
+    *,
+    reply_event_id: str | None,
+    mode: str = "private",
+    session_id: str = "group-1",
+    content: str = "继续",
+) -> CanonicalExperience:
+    raw = {} if reply_event_id is None else {"reply_event_id": reply_event_id}
+    event = ResolvedEvent(
+        event_id=event_id,
+        source="napcat",
+        occurred_at=datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc),
+        session_id=session_id,
+        mode=mode,
+        content=content,
+        actor=_REPLY_USER,
+        raw_metadata=raw,
+    )
+    return CanonicalExperience(
+        id=f"experience:{event_id}",
+        event=event,
+        subject=_REPLY_USER,
+        perspective=Perspective.INTERPERSONAL,
+        provenance=("p2l1-f1-test",),
+    )
+
+
+def _bind_dynamic_inbound_ids(service) -> None:
+    def attached(event):
+        event_id = f"napcat:{event.message_obj.message_id}"
+        return SimpleNamespace(
+            experience=SimpleNamespace(event=SimpleNamespace(event_id=event_id))
+        )
+
+    service._runtime.pre_adapter = SimpleNamespace(attached=attached, attach=attached)
+
+
+def _capture_host_900(service, current) -> None:
+    result = service.capture_host_send_result(
+        _Event(current), _Result([_Operation(0, message_id="900")])
+    )
+    assert result.host_facts == 1
+    _bind_dynamic_inbound_ids(service)
+
+
+def _capture_native_reply(service, current, *, inbound_id: str, target_id: str, **event_kwargs):
+    event = _Event(
+        current,
+        messages=[_Reply(target_id)],
+        message_id=inbound_id,
+        **event_kwargs,
+    )
+    assert service.capture_inbound(event).inbound_facts == 1
+    return event
+
+
+def test_native_host_reply_attaches_originating_episode_without_second_episode(
+    tmp_path, fake_h0
+):
+    service, current = _service(tmp_path)
+    _capture_host_900(service, current)
+    _capture_native_reply(service, current, inbound_id="in-2", target_id="900")
+
+    service._runtime.run_behavior(
+        _reply_experience("napcat:in-2", reply_event_id="napcat:900")
+    )
+
+    assert len(service._runtime.episode_observer.store.all_episodes()) == 1
+    episode = service._runtime.episode_observer.store.get_episode("episode:capture")
+    assert episode is not None
+    assert any(ref.source_event_id == "napcat:in-2" for ref in episode.event_refs)
+
+
+def test_production_composition_binds_runtime_owned_p2r0_resolver(tmp_path):
+    import main
+    from iris_memory.cognitive.iris_adapter import (
+        get_cognitive_runtime,
+        reset_cognitive_runtime,
+    )
+
+    reset_cognitive_runtime()
+    plugin = object.__new__(main.IrisMemoryPlugin)
+    plugin.data_dir = str(tmp_path)
+    plugin._episode_store = None
+    plugin._episode_observer = None
+    plugin._p2r0_capture = None
+    plugin._inbound_semantic_authority = None
+    plugin._semantic_evaluator = None
+    try:
+        plugin._init_episode_shadow_observer()
+        plugin._init_p2r0_capture_service()
+
+        assert plugin._p2r0_capture is not None
+        assert plugin._episode_observer is get_cognitive_runtime().episode_observer
+        resolver = plugin._episode_observer._native_host_reply_resolver
+        assert resolver.__self__ is plugin._p2r0_capture
+        assert (
+            resolver.__func__
+            is capture_module.P2r0CaptureService.resolve_native_host_reply_event_ref
+        )
+    finally:
+        get_cognitive_runtime().episode_observer = None
+        reset_cognitive_runtime()
+
+
+@pytest.mark.parametrize(
+    "event_kwargs",
+    [
+        pytest.param({"group_id": "group-other"}, id="wrong_conversation"),
+        pytest.param({"account_id": "bot-other"}, id="wrong_account"),
+        pytest.param({"platform_id": "napcat-instance-other"}, id="wrong_platform"),
+    ],
+)
+def test_native_host_reply_requires_full_platform_identity(
+    tmp_path, fake_h0, event_kwargs
+):
+    service, current = _service(tmp_path)
+    _capture_host_900(service, current)
+    _capture_native_reply(
+        service,
+        current,
+        inbound_id="in-wrong",
+        target_id="900",
+        **event_kwargs,
+    )
+    assert service.resolve_native_host_reply_event_ref("napcat:in-wrong") is None
+
+
+def test_missing_host_fact_and_unresolved_explicit_reply_do_not_use_unique_open(
+    tmp_path, fake_h0
+):
+    service, current = _service(tmp_path)
+    _bind_dynamic_inbound_ids(service)
+    _capture_native_reply(service, current, inbound_id="in-2", target_id="missing")
+
+    service._runtime.run_behavior(
+        _reply_experience("napcat:in-2", reply_event_id="napcat:missing")
+    )
+
+    assert service.resolve_native_host_reply_event_ref("napcat:in-2") is None
+    assert len(service._runtime.episode_observer.store.all_episodes()) == 2
+    original = service._runtime.episode_observer.store.get_episode("episode:capture")
+    assert original is not None
+    assert not any(ref.source_event_id == "napcat:in-2" for ref in original.event_refs)
+
+
+def test_native_host_reply_preserves_soft_closed_and_finalized_policies(
+    tmp_path, fake_h0
+):
+    soft_service, current = _service(tmp_path / "soft")
+    _capture_host_900(soft_service, current)
+    store = soft_service._runtime.episode_observer.store
+    store.transition_state("episode:capture", EpisodeState.SOFT_CLOSED, reason="idle")
+    _capture_native_reply(
+        soft_service, current, inbound_id="soft-reply", target_id="900"
+    )
+    soft_service._runtime.run_behavior(
+        _reply_experience("napcat:soft-reply", reply_event_id="napcat:900")
+    )
+    assert len(store.all_episodes()) == 1
+    assert store.get_episode("episode:capture").state is EpisodeState.SOFT_CLOSED
+
+    final_service, current = _service(tmp_path / "final")
+    _capture_host_900(final_service, current)
+    final_store = final_service._runtime.episode_observer.store
+    final_store.transition_state("episode:capture", EpisodeState.SOFT_CLOSED, reason="idle")
+    frozen = final_store.transition_state(
+        "episode:capture", EpisodeState.FINALIZED, reason="grace"
+    )
+    frozen_refs = frozen.event_refs
+    _capture_native_reply(
+        final_service, current, inbound_id="late-reply", target_id="900"
+    )
+    final_service._runtime.run_behavior(
+        _reply_experience(
+            "napcat:late-reply",
+            reply_event_id="napcat:900",
+            content="你这里说错了",
+        )
+    )
+    assert final_store.get_episode("episode:capture").event_refs == frozen_refs
+    assert final_store.get_episode("episode:capture").state is EpisodeState.FINALIZED
+    assert len(final_store.all_episodes()) == 2
+    assert final_store.get_outcomes("episode:capture")
+
+
+def test_multiple_host_messages_each_resolve_same_episode(tmp_path, fake_h0):
+    service, current = _service(tmp_path)
+    result = service.capture_host_send_result(
+        _Event(current),
+        _Result(
+            [
+                _Operation(0, message_id="900"),
+                _Operation(1, message_id="901"),
+            ]
+        ),
+    )
+    assert result.host_facts == 2
+    _bind_dynamic_inbound_ids(service)
+
+    for inbound_id, target_id in (("in-2", "900"), ("in-3", "901")):
+        _capture_native_reply(
+            service, current, inbound_id=inbound_id, target_id=target_id
+        )
+        assert (
+            service.resolve_native_host_reply_event_ref(f"napcat:{inbound_id}")
+            == "HOST_OUTPUT:napcat:in-1:trace:capture:trace:capture:1"
+        )
+        service._runtime.run_behavior(
+            _reply_experience(
+                f"napcat:{inbound_id}", reply_event_id=f"napcat:{target_id}"
+            )
+        )
+
+    assert len(service._runtime.episode_observer.store.all_episodes()) == 1
+
+
+def test_native_host_reply_resolution_replays_after_restart(tmp_path, fake_h0):
+    service, current = _service(tmp_path)
+    _capture_host_900(service, current)
+    _capture_native_reply(service, current, inbound_id="in-2", target_id="900")
+
+    replayed = capture_module.P2r0CaptureService(
+        P2r0Store(tmp_path / "facts.jsonl"), service._runtime
+    )
+    assert (
+        replayed.resolve_native_host_reply_event_ref("napcat:in-2")
+        == "HOST_OUTPUT:napcat:in-1:trace:capture:trace:capture:1"
+    )
+    replayed._runtime.run_behavior(
+        _reply_experience("napcat:in-2", reply_event_id="napcat:900")
+    )
+    assert len(replayed._runtime.episode_observer.store.all_episodes()) == 1
+
+
+def test_existing_non_reply_and_internal_reply_routing_are_unchanged(tmp_path, fake_h0):
+    private_service, _current = _service(tmp_path / "private")
+    private_service._runtime.run_behavior(
+        _reply_experience("napcat:private-followup", reply_event_id=None)
+    )
+    assert len(private_service._runtime.episode_observer.store.all_episodes()) == 1
+
+    group_service, _current = _service(tmp_path / "group")
+    group_service._runtime.run_behavior(
+        _reply_experience(
+            "napcat:ambient",
+            reply_event_id=None,
+            mode="casual_group_chat",
+        )
+    )
+    assert len(group_service._runtime.episode_observer.store.all_episodes()) == 1
+
+    internal_service, _current = _service(tmp_path / "internal")
+    internal_service._runtime.run_behavior(
+        _reply_experience("napcat:internal", reply_event_id="napcat:in-1")
+    )
+    assert len(internal_service._runtime.episode_observer.store.all_episodes()) == 1
+    episode = internal_service._runtime.episode_observer.store.get_episode(
+        "episode:capture"
+    )
+    assert episode is not None
+    assert any(ref.source_event_id == "napcat:internal" for ref in episode.event_refs)

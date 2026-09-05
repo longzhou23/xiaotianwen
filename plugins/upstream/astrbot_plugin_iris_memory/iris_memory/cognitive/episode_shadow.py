@@ -6,10 +6,15 @@ fail open for the Legacy/current-turn behavior.
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
+from collections.abc import Callable
 
-from .contracts import BehaviorExecutionRecord, BehaviorTrace, CanonicalExperience, RuntimeMode
+from .contracts import (
+    BehaviorExecutionRecord,
+    BehaviorTrace,
+    CanonicalExperience,
+    RuntimeMode,
+)
 from .episode import (
     BoundaryAction,
     Episode,
@@ -41,10 +46,24 @@ class EpisodeShadowObserver:
         *,
         self_entity: str = "agent:xiaotianwen",
         outcome_collector: OutcomeCollector | None = None,
+        native_host_reply_resolver: Callable[[str], str | None] | None = None,
     ) -> None:
         self.store = store
         self.assembler = EpisodeAssembler(self_entity=self_entity)
         self.outcome_collector = outcome_collector or OutcomeCollector()
+        self._native_host_reply_resolver = native_host_reply_resolver
+
+    def bind_native_host_reply_resolver(
+        self, resolver: Callable[[str], str | None] | None
+    ) -> None:
+        """Bind the runtime-owned P2r0 exact Host identity resolver.
+
+        The resolver returns only an existing Episode HOST_OUTPUT EventRef id.
+        EpisodeStore remains the final authority for EventRef-to-Episode lineage.
+        """
+        if resolver is not None and not callable(resolver):
+            raise TypeError("native Host reply resolver must be callable")
+        self._native_host_reply_resolver = resolver
 
     def observe_behavior_trace(
         self,
@@ -55,7 +74,20 @@ class EpisodeShadowObserver:
             return
         try:
             reply_event_id = self._reply_event_id(experience)
+            native_host_episode: Episode | None = None
             if reply_event_id is not None:
+                native_host_episode = self._resolve_native_host_reply_episode(
+                    experience.event.event_id
+                )
+                if (
+                    native_host_episode is not None
+                    and native_host_episode.state is EpisodeState.FINALIZED
+                ):
+                    self._observe_finalized_feedback(
+                        experience, trace, native_host_episode
+                    )
+                    return
+
                 historical = self.store.find_episode_by_source_event_id(reply_event_id)
                 if historical is not None and historical.state is EpisodeState.FINALIZED:
                     self._observe_finalized_feedback(experience, trace, historical)
@@ -67,6 +99,16 @@ class EpisodeShadowObserver:
                 for ref in ep.event_refs:
                     if ref.source_event_id:
                         event_to_episode[ref.source_event_id] = ep.episode_id
+            if (
+                reply_event_id is not None
+                and native_host_episode is not None
+                and native_host_episode.state
+                in (EpisodeState.OPEN, EpisodeState.SOFT_CLOSED)
+                and any(ep.episode_id == native_host_episode.episode_id for ep in active)
+            ):
+                # Preserve the existing assembler policy by presenting the
+                # exact native Host reply as an exact member-event resolution.
+                event_to_episode[reply_event_id] = native_host_episode.episode_id
             decision = self.assembler.decide(
                 experience,
                 active_episodes=active,
@@ -88,6 +130,27 @@ class EpisodeShadowObserver:
                 self._record_outcomes(experience, target_episode_id=ep.episode_id)
         except Exception:
             logger.exception("Episode shadow observation failed closed; Host unaffected")
+
+    def _resolve_native_host_reply_episode(self, source_event_id: str) -> Episode | None:
+        resolver = self._native_host_reply_resolver
+        if resolver is None:
+            return None
+        try:
+            host_ref_id = resolver(source_event_id)
+        except Exception:
+            logger.exception("Exact native Host reply resolution failed closed")
+            return None
+        if type(host_ref_id) is not str or not host_ref_id:
+            return None
+        episode = self.store.find_episode_by_event_ref(host_ref_id)
+        if episode is None:
+            return None
+        matches = tuple(
+            ref
+            for ref in episode.event_refs
+            if ref.ref_id == host_ref_id and ref.kind is EpisodeEventKind.HOST_OUTPUT
+        )
+        return episode if len(matches) == 1 else None
 
     @staticmethod
     def _reply_event_id(experience: CanonicalExperience) -> str | None:

@@ -44,6 +44,7 @@ from astrbot.core.provider.entities import LLMResponse, ProviderRequest
 
 from iris_memory.cognitive.contracts import EventExecutionContext, RuntimeMode
 from iris_memory.cognitive.episode import EpisodeState
+from iris_memory.cognitive.episode_lifecycle import EpisodeLifecycleOwnerV1
 from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
 from iris_memory.cognitive.episode_store import AppendOnlyEpisodeStore
 from iris_memory.cognitive.explicit_correction_rule import (
@@ -242,6 +243,7 @@ class IrisMemoryPlugin(Star):
             self._production_review_store = None
             self._production_review_completion = None
             self._production_review_evidence_enabled = False
+            self._episode_lifecycle_owner: EpisodeLifecycleOwnerV1 | None = None
             self._semantic_evaluator: BoundedSemanticEvaluatorWorkerV1 | None = None
             self._production_semantic_evaluator: str | None = None
             self._semantic_evaluator_requested = False
@@ -439,6 +441,44 @@ class IrisMemoryPlugin(Star):
                 "P2r0 historical archive wiring initialization failed; archive remains unavailable"
             )
 
+    def _init_episode_lifecycle_owner(self) -> None:
+        """Compose the one lifecycle owner without enabling its task yet."""
+        store = self._episode_store
+        if store is None:
+            return
+        try:
+            self._episode_lifecycle_owner = EpisodeLifecycleOwnerV1(
+                store,
+                complete_finalized=self._complete_finalized_episode_from_lifecycle,
+                completion_satisfied=self._finalized_episode_completion_satisfied,
+            )
+        except Exception:
+            self._episode_lifecycle_owner = None
+            logger.exception("Episode lifecycle owner unavailable; automatic finalization remains disabled")
+
+    async def _start_episode_lifecycle_owner(self) -> None:
+        """Honor the explicit lifecycle config; default is intentionally off."""
+        enabled = self.config.get("episode_lifecycle.auto_finalize", False)
+        owner = self._episode_lifecycle_owner
+        if type(enabled) is not bool or not enabled or owner is None:
+            logger.info("Episode lifecycle automatic finalization disabled by configuration")
+            return
+        try:
+            await owner.start()
+            logger.info("Episode lifecycle owner started (60-second bounded scan)")
+        except Exception:
+            logger.exception("Episode lifecycle owner failed to start; automatic finalization disabled")
+
+    def _complete_finalized_episode_from_lifecycle(self, episode, outcomes):
+        coordinator = self._production_review_completion
+        if coordinator is None:
+            return None
+        return coordinator.complete_episode(episode, outcomes)
+
+    def _finalized_episode_completion_satisfied(self, episode, outcomes) -> bool:
+        coordinator = self._production_review_completion
+        return coordinator is not None and coordinator.completion_satisfied(episode, outcomes)
+
     def _recompose_production_review_completion(self) -> None:
         """Atomically replace the one completion consumer using existing stores.
 
@@ -520,7 +560,11 @@ class IrisMemoryPlugin(Star):
                 return None
             if episode.state is not EpisodeState.FINALIZED:
                 return None
-            return coordinator.complete_episode(episode, store.get_outcomes(episode_id))
+            finalized_outcomes = getattr(store, "get_finalized_outcomes", None)
+            if not callable(finalized_outcomes):
+                logger.error("Production Review completion unavailable: J1 finalized-outcome authority is missing")
+                return None
+            return coordinator.complete_episode(episode, finalized_outcomes(episode_id))
         except Exception:
             logger.exception("Production Review completion failed for Episode %s", episode_id)
             return None
@@ -609,6 +653,8 @@ class IrisMemoryPlugin(Star):
         # of Review/Archive wiring and has no in-memory fallback authority.
         self._init_p2r0_capture_service()
         self._init_p2r0_archive_service()
+        self._init_episode_lifecycle_owner()
+        await self._start_episode_lifecycle_owner()
 
         # 1. 记忆组件初始化
         try:
@@ -667,6 +713,9 @@ class IrisMemoryPlugin(Star):
     async def terminate(self):
         """插件卸载清理"""
         logger.info("开始关闭插件组件...")
+        if self._episode_lifecycle_owner is not None:
+            await self._episode_lifecycle_owner.shutdown()
+            self._episode_lifecycle_owner = None
         if self._semantic_evaluator is not None:
             try:
                 await self._semantic_evaluator.shutdown()

@@ -135,6 +135,68 @@ class ProductionReviewCompletionCoordinator:
             logger.warning("Production Review completion failed: %s", exc)
             return None
 
+    def completion_satisfied(
+        self, episode: Any, outcomes: tuple[Any, ...] | list[Any] = ()
+    ) -> bool:
+        """Check the immutable completion chain without producing new state."""
+        from .episode import Episode, EpisodeState
+
+        if type(episode) is not Episode or episode.state is not EpisodeState.FINALIZED:
+            return False
+        outcome_tuple = tuple(outcomes)
+        # An Episode which P1 deterministically says to skip has no Review
+        # completion obligation.  This avoids turning a legitimate P1 SKIP into
+        # an unbounded lifecycle retry loop.
+        if evaluate_review_eligibility(episode, outcome_tuple).decision.value != "REVIEW":
+            return True
+        try:
+            snapshot = ReviewInputSnapshot(episode, outcome_tuple, {})
+            input_hash = compute_input_snapshot_hash(episode, outcome_tuple, {})
+            run_id = f"run:production:{input_hash.removeprefix('sha256:')}"
+            run = self._review_store.get_review_run(run_id)
+            if run is None or run.episode_id != episode.episode_id or run.input_snapshot_hash != input_hash:
+                return False
+            self._archive_service.p2_store.require_archive(run)
+            archives = tuple(
+                archive
+                for archive in self._archive_service.p2r0_store.archives
+                if archive.review_run_id == run.review_run_id
+                and archive.episode_id == run.episode_id
+                and archive.input_snapshot_hash == run.input_snapshot_hash
+            )
+            if len(archives) != 1:
+                return False
+            promoter = self._evidence_promoter
+            if promoter is None:
+                return True
+            # The sole frozen production rule has no generic registration API.
+            # Re-run its existing pure builder only to determine whether a
+            # committed Evidence is required; this performs no model call or
+            # persistence operation.
+            from .explicit_correction_rule import (
+                ExplicitCorrectionProductionPromoterV1,
+                build_explicit_correction_candidate,
+            )
+
+            if type(promoter) is not ExplicitCorrectionProductionPromoterV1:
+                return False
+            p2_store = self._archive_service.p2_store
+            required_ids = {
+                candidate.evidence.evidence_id
+                for finding in run.findings
+                if (candidate := build_explicit_correction_candidate(
+                    run,
+                    snapshot,
+                    finding,
+                    p2_store=p2_store,
+                    p2r0_store=self._archive_service.p2r0_store,
+                    semantic_store=promoter._semantic_store,
+                )) is not None
+            }
+            return required_ids <= set(p2_store._evidence_commits)
+        except Exception:  # noqa: BLE001 - uncertain completion retries later
+            return False
+
     complete_finalized_episode = complete_episode
 
 

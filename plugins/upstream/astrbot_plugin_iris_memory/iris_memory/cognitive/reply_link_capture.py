@@ -99,6 +99,12 @@ class P2r0CaptureService:
         self._store = store
         self._runtime = runtime
         self._semantic_authority_service = semantic_authority_service
+        observer = runtime.episode_observer
+        bind_reply_resolver = getattr(
+            observer, "bind_native_host_reply_resolver", None
+        )
+        if callable(bind_reply_resolver):
+            bind_reply_resolver(self.resolve_native_host_reply_event_ref)
 
     @property
     def store(self) -> P2r0Store:
@@ -116,6 +122,32 @@ class P2r0CaptureService:
         next inbound capture without replacing the factual P2r0 store.
         """
         self._semantic_authority_service = service
+
+    def resolve_native_host_reply_event_ref(self, source_event_id: str) -> str | None:
+        """Resolve one committed inbound Reply to its exact Host EventRef.
+
+        This is a derived read over the authoritative P2r0 facts.  It creates
+        no second ledger and deliberately requires the full frozen
+        PlatformMessageIdentityV1 equality carried by those facts.
+        """
+        if type(source_event_id) is not str or not source_event_id:
+            return None
+        inbound = tuple(
+            fact
+            for fact in self._store.inbound_reply_facts
+            if fact.source_event_id == source_event_id
+        )
+        if len(inbound) != 1:
+            return None
+        target_identity = inbound[0].reply_target_platform_message_identity
+        hosts = tuple(
+            fact
+            for fact in self._store.host_output_facts
+            if fact.platform_message_identity == target_identity
+        )
+        if len(hosts) != 1:
+            return None
+        return hosts[0].host_output_event_ref_id
 
     def capture_host_send_result(self, event: object, result: object) -> CaptureResult:
         """Persist eligible MESSAGE identities from one finalized H0 result.
