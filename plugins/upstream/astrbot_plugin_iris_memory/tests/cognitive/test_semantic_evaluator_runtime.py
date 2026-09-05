@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from iris_memory.cognitive.contracts import ResolvedEvent
@@ -22,8 +23,11 @@ from iris_memory.cognitive.reply_link_authority import (
 )
 
 try:
-    from main import IrisMemoryPlugin
+    import main as iris_main
+
+    IrisMemoryPlugin = iris_main.IrisMemoryPlugin
 except ImportError:  # pragma: no cover - package-only test discovery
+    iris_main = None  # type: ignore[assignment]
     IrisMemoryPlugin = None  # type: ignore[assignment,misc]
 from iris_memory.cognitive.semantic_evaluator_runtime import (
     CANONICAL_SYSTEM_PROMPT,
@@ -494,3 +498,187 @@ def test_plugin_startup_enablement_is_explicit_and_fail_closed(tmp_path: Path) -
     enabled._init_semantic_evaluator()
     assert enabled._semantic_evaluator is not None
     assert enabled._production_semantic_evaluator == "EXPLICIT_CORRECTION_V1"
+
+
+@pytest.mark.asyncio
+async def test_late_provider_bind_recomposes_only_the_existing_completion_layer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A delayed exact provider enables one replacement coordinator, not new stores."""
+    if IrisMemoryPlugin is None or iris_main is None:  # pragma: no cover - defensive package import
+        pytest.skip("main plugin module unavailable")
+
+    class _Config:
+        def __init__(self, promotion_enabled: bool) -> None:
+            self.promotion_enabled = promotion_enabled
+
+        def get(self, key: str, default: object = None) -> object:
+            return {
+                "semantic_evaluator.enable": True,
+                "semantic_evaluator.provider_id": RUNTIME_PROVIDER_ID,
+                "review_evidence_promotion.enable_explicit_correction_exact_host_output": self.promotion_enabled,
+            }.get(key, default)
+
+    class _Context:
+        provider: object | None = None
+
+        def get_provider_by_id(self, provider_id: str) -> object | None:
+            assert provider_id == RUNTIME_PROVIDER_ID
+            return self.provider
+
+    class _Worker:
+        def __init__(self, semantic_store: object) -> None:
+            self.profile = SimpleNamespace(
+                profile_payload_hash=EXPECTED_RUNTIME_PROFILE_HASH,
+                model=RUNTIME_MODEL,
+            )
+            self.authority_service = SimpleNamespace(store=semantic_store)
+            self.start_calls = 0
+
+        async def start(self) -> None:
+            self.start_calls += 1
+
+    class _Capture:
+        def __init__(self) -> None:
+            self.bound: list[object] = []
+
+        def bind_semantic_authority_service(self, worker: object) -> None:
+            self.bound.append(worker)
+
+    class _Archive:
+        def __init__(self) -> None:
+            self.p2_store = object()
+            self.p2r0_store = object()
+
+    class _Promoter:
+        created: ClassVar[list[tuple[object, object, object]]] = []
+
+        def __init__(self, p2_store: object, p2r0_store: object, semantic_store: object) -> None:
+            self.created.append((p2_store, p2r0_store, semantic_store))
+
+    class _Coordinator:
+        created: ClassVar[list[tuple[object, object, object | None]]] = []
+
+        def __init__(self, archive: object, review_store: object, *, evidence_promoter: object | None = None) -> None:
+            self.archive = archive
+            self.review_store = review_store
+            self.evidence_promoter = evidence_promoter
+            self.created.append((archive, review_store, evidence_promoter))
+
+    semantic_store = object()
+    worker = _Worker(semantic_store)
+    monkeypatch.setattr(
+        iris_main,
+        "create_runtime_semantic_evaluator",
+        lambda *_args, **_kwargs: worker,
+    )
+    monkeypatch.setattr(iris_main, "ExplicitCorrectionProductionPromoterV1", _Promoter)
+    monkeypatch.setattr(iris_main, "ProductionReviewCompletionCoordinator", _Coordinator)
+
+    plugin = object.__new__(IrisMemoryPlugin)
+    context = _Context()
+    archive = _Archive()
+    review_store = object()
+    initial_coordinator = object()
+    capture = _Capture()
+    plugin.config = _Config(True)
+    plugin.context = context
+    plugin.data_dir = tmp_path
+    plugin._semantic_evaluator_requested = True
+    plugin._semantic_evaluator = None
+    plugin._production_semantic_evaluator = None
+    plugin._p2r0_capture = capture
+    plugin._inbound_semantic_authority = None
+    plugin._p2r0_archive = archive
+    plugin._production_review_store = review_store
+    plugin._production_review_completion = initial_coordinator
+    plugin._production_review_evidence_enabled = False
+
+    # L1/L2: startup before Provider readiness preserves the disabled
+    # coordinator and performs no persistence/composition side effect.
+    await plugin._ensure_semantic_evaluator()
+    assert plugin._production_review_completion is initial_coordinator
+    assert plugin._production_review_evidence_enabled is False
+    assert _Promoter.created == []
+
+    # L1/L7: when the exact Provider appears, only the completion layer is
+    # replaced; all runtime-owned persistence instances are reused verbatim.
+    context.provider = object()
+    await plugin._ensure_semantic_evaluator()
+    replacement = plugin._production_review_completion
+    assert replacement is not initial_coordinator
+    assert plugin._production_review_evidence_enabled is True
+    assert capture.bound == [worker]
+    assert plugin._inbound_semantic_authority is worker
+    assert _Promoter.created == [(archive.p2_store, archive.p2r0_store, semantic_store)]
+    assert _Coordinator.created == [(archive, review_store, replacement.evidence_promoter)]
+    assert replacement.archive is archive
+    assert replacement.review_store is review_store
+
+    # L4: a successful binding is terminal for this runtime; retries do not
+    # add a worker, promoter, coordinator, or persistence operation.
+    await plugin._ensure_semantic_evaluator()
+    assert plugin._production_review_completion is replacement
+    assert worker.start_calls == 1
+    assert len(_Promoter.created) == 1
+    assert len(_Coordinator.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_late_provider_bind_with_promotion_config_false_stays_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Evaluator readiness alone never enables the frozen P2r.1 rule."""
+    if IrisMemoryPlugin is None or iris_main is None:  # pragma: no cover - defensive package import
+        pytest.skip("main plugin module unavailable")
+
+    class _Config:
+        def get(self, key: str, default: object = None) -> object:
+            return {
+                "semantic_evaluator.enable": True,
+                "semantic_evaluator.provider_id": RUNTIME_PROVIDER_ID,
+                "review_evidence_promotion.enable_explicit_correction_exact_host_output": False,
+            }.get(key, default)
+
+    class _Worker:
+        profile = SimpleNamespace(
+            profile_payload_hash=EXPECTED_RUNTIME_PROFILE_HASH,
+            model=RUNTIME_MODEL,
+        )
+        authority_service = SimpleNamespace(store=object())
+
+        async def start(self) -> None:
+            return None
+
+    class _Capture:
+        def bind_semantic_authority_service(self, _worker: object) -> None:
+            return None
+
+    class _Archive:
+        p2_store = object()
+        p2r0_store = object()
+
+    class _Coordinator:
+        def __init__(self, _archive: object, _review_store: object, *, evidence_promoter: object | None = None) -> None:
+            assert evidence_promoter is None
+
+    monkeypatch.setattr(iris_main, "create_runtime_semantic_evaluator", lambda *_args, **_kwargs: _Worker())
+    monkeypatch.setattr(iris_main, "ProductionReviewCompletionCoordinator", _Coordinator)
+
+    plugin = object.__new__(IrisMemoryPlugin)
+    plugin.config = _Config()
+    plugin.context = SimpleNamespace(get_provider_by_id=lambda _provider_id: object())
+    plugin.data_dir = tmp_path
+    plugin._semantic_evaluator_requested = True
+    plugin._semantic_evaluator = None
+    plugin._production_semantic_evaluator = None
+    plugin._p2r0_capture = _Capture()
+    plugin._inbound_semantic_authority = None
+    plugin._p2r0_archive = _Archive()
+    plugin._production_review_store = object()
+    plugin._production_review_completion = object()
+    plugin._production_review_evidence_enabled = False
+
+    await plugin._ensure_semantic_evaluator()
+    assert plugin._semantic_evaluator is not None
+    assert plugin._production_review_evidence_enabled is False

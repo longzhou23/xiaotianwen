@@ -239,6 +239,7 @@ class IrisMemoryPlugin(Star):
             self._p2r0_capture = None
             self._inbound_semantic_authority = None
             self._p2r0_archive = None
+            self._production_review_store = None
             self._production_review_completion = None
             self._production_review_evidence_enabled = False
             self._semantic_evaluator: BoundedSemanticEvaluatorWorkerV1 | None = None
@@ -397,6 +398,12 @@ class IrisMemoryPlugin(Star):
             if callable(bind):
                 bind(worker)
             self._inbound_semantic_authority = worker
+            # The initial archive coordinator may have been composed before
+            # AstrBot finished loading this exact provider.  Recompose only
+            # the in-memory consumer layer now that the bound evaluator can
+            # satisfy the explicit production gate; all persistence owners
+            # below remain the already-created runtime instances.
+            self._recompose_production_review_completion()
 
     async def _retry_semantic_evaluator_after_provider_start(self) -> None:
         """Retry one explicit binding after AstrBot finishes provider loading."""
@@ -425,21 +432,41 @@ class IrisMemoryPlugin(Star):
             )
             review_dir = Path(self.data_dir) / "cognitive" / "reviews"
             review_dir.mkdir(parents=True, exist_ok=True)
-            review_store = AppendOnlyReviewStore(review_dir / "reviews.jsonl")
-            evidence_promoter = self._create_production_evidence_promoter()
-            self._production_review_completion = ProductionReviewCompletionCoordinator(
-                self._p2r0_archive,
-                review_store,
-                evidence_promoter=evidence_promoter,
-            )
-            logger.info(
-                "P2r0 historical archive wiring enabled; P2r.1 evidence promotion=%s",
-                self._production_review_evidence_enabled,
-            )
+            self._production_review_store = AppendOnlyReviewStore(review_dir / "reviews.jsonl")
+            self._recompose_production_review_completion()
         except Exception:
             logger.exception(
                 "P2r0 historical archive wiring initialization failed; archive remains unavailable"
             )
+
+    def _recompose_production_review_completion(self) -> None:
+        """Atomically replace the one completion consumer using existing stores.
+
+        Provider availability may lag plugin initialization.  This method is
+        deliberately limited to the coordinator/promoter composition layer:
+        it never opens a second Review, P2, P2r0, archive, or semantic-authority
+        store.  A single attribute replacement leaves exactly one active
+        completion consumer for subsequent explicit Episode completion calls.
+        """
+        archive = self._p2r0_archive
+        review_store = self._production_review_store
+        if archive is None or review_store is None:
+            return
+        # Keep the status fail-closed until the complete replacement is ready
+        # to become the sole active completion consumer.
+        self._production_review_evidence_enabled = False
+        evidence_promoter = self._create_production_evidence_promoter()
+        coordinator = ProductionReviewCompletionCoordinator(
+            archive,
+            review_store,
+            evidence_promoter=evidence_promoter,
+        )
+        self._production_review_completion = coordinator
+        self._production_review_evidence_enabled = evidence_promoter is not None
+        logger.info(
+            "P2r0 historical archive wiring enabled; P2r.1 evidence promotion=%s",
+            self._production_review_evidence_enabled,
+        )
 
     def _create_production_evidence_promoter(self):
         """Explicitly compose the sole frozen production rule, or fail closed.
@@ -448,7 +475,6 @@ class IrisMemoryPlugin(Star):
         fallback.  A missing evaluator, factual store, or exact boolean keeps
         the ordinary Review/archive path running with zero new Evidence.
         """
-        self._production_review_evidence_enabled = False
         enabled = self.config.get(
             "review_evidence_promotion.enable_explicit_correction_exact_host_output",
             False,
@@ -469,7 +495,6 @@ class IrisMemoryPlugin(Star):
         except Exception:
             logger.exception("P2r.1 evidence promotion disabled during authority composition")
             return None
-        self._production_review_evidence_enabled = True
         return promoter
 
     def archive_review_run(self, run: object, snapshot: object):
