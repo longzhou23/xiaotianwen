@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier, Thread
 
 import pytest
 
+from iris_memory.cognitive.contracts import EntityReference
 from iris_memory.cognitive.episode import (
     Episode,
     EpisodeEventKind,
@@ -17,18 +19,17 @@ from iris_memory.cognitive.episode import (
     make_episode_id,
 )
 from iris_memory.cognitive.episode_store import (
-    _outcome_to_dict,
     AppendOnlyEpisodeStore,
     EpisodeLogCorruptionError,
+    EpisodePersistenceError,
     InMemoryEpisodeStore,
+    _outcome_to_dict,
 )
 from iris_memory.cognitive.outcome import (
     OutcomeKind,
     OutcomeObservation,
     make_outcome_observation_id,
 )
-from iris_memory.cognitive.contracts import EntityReference
-
 
 _NOW = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
 _ACTOR = EntityReference("person:qq:1", "platform_uid", 1.0, ("qq:1",))
@@ -56,6 +57,18 @@ def _ref(source: str = "qq:1") -> EpisodeEventRef:
         source_event_id=source,
         observed_at=_NOW,
         actor_entity=_ACTOR,
+    )
+
+
+def _outcome(episode_id: str, source_event_id: str, *, observed_at: datetime = _NOW) -> OutcomeObservation:
+    return OutcomeObservation(
+        observation_id=make_outcome_observation_id(
+            episode_id, OutcomeKind.EXPLICIT_CORRECTION, source_event_id=source_event_id
+        ),
+        target_episode_id=episode_id,
+        kind=OutcomeKind.EXPLICIT_CORRECTION,
+        observed_at=observed_at,
+        source_event_id=source_event_id,
     )
 
 
@@ -96,6 +109,176 @@ def test_append_only_replay_restores_state_and_outcomes(tmp_path: Path):
     assert restored.state is EpisodeState.FINALIZED
     assert len(restored.event_refs) == 1
     assert len(replay.get_outcomes(ep.episode_id)) == 1
+
+
+def test_outcome_append_failure_does_not_publish_or_survive_restart(tmp_path: Path, monkeypatch):
+    path = tmp_path / "episodes.jsonl"
+    store = AppendOnlyEpisodeStore(path)
+    ep = store.create_episode(_ep())
+    durable_end = path.stat().st_size
+    real_fsync = store._fsync
+    calls = 0
+
+    def fail_first_sync(file_handle: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("injected fsync failure")
+        real_fsync(file_handle)
+
+    monkeypatch.setattr(store, "_fsync", fail_first_sync)
+    with pytest.raises(EpisodePersistenceError):
+        store.record_outcome(_outcome(ep.episode_id, "qq:outcome-failed"))
+
+    assert store.get_outcomes(ep.episode_id) == ()
+    assert path.stat().st_size == durable_end
+    replay = AppendOnlyEpisodeStore(path)
+    assert replay.get_outcomes(ep.episode_id) == ()
+
+
+def test_finalization_append_failure_does_not_publish_boundary_or_state(tmp_path: Path, monkeypatch):
+    path = tmp_path / "episodes.jsonl"
+    store = AppendOnlyEpisodeStore(path)
+    ep = store.create_episode(_ep())
+    ep = store.transition_state(ep.episode_id, EpisodeState.SOFT_CLOSED, reason="idle")
+    real_fsync = store._fsync
+    calls = 0
+
+    def fail_first_sync(file_handle: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("injected fsync failure")
+        real_fsync(file_handle)
+
+    monkeypatch.setattr(store, "_fsync", fail_first_sync)
+    with pytest.raises(EpisodePersistenceError):
+        store.transition_state(ep.episode_id, EpisodeState.FINALIZED, reason="grace")
+
+    assert store.get_episode(ep.episode_id).state is EpisodeState.SOFT_CLOSED
+    assert store.get_finalization_boundary(ep.episode_id) is None
+    replay = AppendOnlyEpisodeStore(path)
+    assert replay.get_episode(ep.episode_id).state is EpisodeState.SOFT_CLOSED
+    assert replay.get_finalization_boundary(ep.episode_id) is None
+
+
+def test_episode_creation_failure_does_not_publish_volatile_episode(tmp_path: Path, monkeypatch):
+    path = tmp_path / "episodes.jsonl"
+    store = AppendOnlyEpisodeStore(path)
+    real_fsync = store._fsync
+    calls = 0
+
+    def fail_first_sync(file_handle: object) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OSError("injected fsync failure")
+        real_fsync(file_handle)
+
+    monkeypatch.setattr(store, "_fsync", fail_first_sync)
+    with pytest.raises(EpisodePersistenceError):
+        store.create_episode(_ep())
+
+    assert store.get_episode(_ep().episode_id) is None
+    assert AppendOnlyEpisodeStore(path).get_episode(_ep().episode_id) is None
+
+
+def test_journal_positions_define_finalized_outcome_set_and_restart_is_stable(tmp_path: Path):
+    path = tmp_path / "episodes.jsonl"
+    store = AppendOnlyEpisodeStore(path)
+    ep = store.create_episode(_ep())
+    before = store.record_outcome(_outcome(ep.episode_id, "qq:before"))
+    ep = store.transition_state(ep.episode_id, EpisodeState.SOFT_CLOSED, reason="idle")
+    ep = store.transition_state(ep.episode_id, EpisodeState.FINALIZED, reason="grace")
+    boundary = store.get_finalization_boundary(ep.episode_id)
+
+    assert boundary is not None
+    assert store.get_finalized_outcomes(ep.episode_id) == (before,)
+    assert store._outcome_positions[before.observation_id] < boundary
+
+    replay = AppendOnlyEpisodeStore(path)
+    assert replay.get_finalization_boundary(ep.episode_id) == boundary
+    assert replay.get_finalized_outcomes(ep.episode_id) == (before,)
+
+
+def test_post_finalization_backdated_outcome_is_excluded_by_journal_position(tmp_path: Path):
+    path = tmp_path / "episodes.jsonl"
+    store = AppendOnlyEpisodeStore(path)
+    ep = store.create_episode(_ep())
+    ep = store.transition_state(ep.episode_id, EpisodeState.SOFT_CLOSED, reason="idle")
+    ep = store.transition_state(ep.episode_id, EpisodeState.FINALIZED, reason="grace")
+    late = store.record_outcome(
+        _outcome(ep.episode_id, "qq:late", observed_at=_NOW - timedelta(days=365))
+    )
+
+    boundary = store.get_finalization_boundary(ep.episode_id)
+    assert boundary is not None
+    assert store._outcome_positions[late.observation_id] > boundary
+    assert store.get_finalized_outcomes(ep.episode_id) == ()
+
+
+def test_concurrent_outcome_and_finalization_use_one_journal_winner(tmp_path: Path):
+    store = AppendOnlyEpisodeStore(tmp_path / "episodes.jsonl")
+    ep = store.create_episode(_ep())
+    ep = store.transition_state(ep.episode_id, EpisodeState.SOFT_CLOSED, reason="idle")
+    outcome = _outcome(ep.episode_id, "qq:concurrent")
+    barrier = Barrier(3)
+    failures: list[Exception] = []
+
+    def record_outcome() -> None:
+        try:
+            barrier.wait()
+            store.record_outcome(outcome)
+        except Exception as exc:  # noqa: BLE001 - asserted by the parent thread
+            failures.append(exc)
+
+    def finalize() -> None:
+        try:
+            barrier.wait()
+            store.transition_state(ep.episode_id, EpisodeState.FINALIZED, reason="grace")
+        except Exception as exc:  # noqa: BLE001 - asserted by the parent thread
+            failures.append(exc)
+
+    outcome_thread = Thread(target=record_outcome)
+    finalization_thread = Thread(target=finalize)
+    outcome_thread.start()
+    finalization_thread.start()
+    barrier.wait()
+    outcome_thread.join()
+    finalization_thread.join()
+
+    assert failures == []
+    boundary = store.get_finalization_boundary(ep.episode_id)
+    assert boundary is not None
+    is_included = outcome in store.get_finalized_outcomes(ep.episode_id)
+    assert is_included is (store._outcome_positions[outcome.observation_id] < boundary)
+
+
+def test_uncertain_tail_poisoning_fails_closed(tmp_path: Path, monkeypatch):
+    path = tmp_path / "episodes.jsonl"
+    store = AppendOnlyEpisodeStore(path)
+    ep = store.create_episode(_ep())
+
+    def fail_every_sync(_file_handle: object) -> None:
+        raise OSError("injected fsync failure")
+
+    monkeypatch.setattr(store, "_fsync", fail_every_sync)
+    with pytest.raises(EpisodePersistenceError):
+        store.record_outcome(_outcome(ep.episode_id, "qq:uncertain-tail"))
+    with pytest.raises(EpisodePersistenceError):
+        store.transition_state(ep.episode_id, EpisodeState.SOFT_CLOSED, reason="idle")
+
+
+def test_illegal_repeat_finalization_cannot_select_newer_boundary(tmp_path: Path):
+    store = AppendOnlyEpisodeStore(tmp_path / "episodes.jsonl")
+    ep = store.create_episode(_ep())
+    ep = store.transition_state(ep.episode_id, EpisodeState.SOFT_CLOSED, reason="idle")
+    ep = store.transition_state(ep.episode_id, EpisodeState.FINALIZED, reason="grace")
+    boundary = store.get_finalization_boundary(ep.episode_id)
+
+    with pytest.raises(ValueError):
+        store.transition_state(ep.episode_id, EpisodeState.FINALIZED, reason="again")
+    assert store.get_finalization_boundary(ep.episode_id) == boundary
 
 
 def test_restart_marks_open_as_interrupted(tmp_path: Path):

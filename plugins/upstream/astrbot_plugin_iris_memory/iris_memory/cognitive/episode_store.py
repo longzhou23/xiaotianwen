@@ -5,12 +5,14 @@ The append-only store is Cognitive behavior-history storage, not Iris Memory.
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import datetime
 import json
 import logging
+import os
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from threading import RLock
+from typing import ClassVar, Protocol, runtime_checkable
 from uuid import uuid4
 
 from .contracts import EntityReference
@@ -19,7 +21,6 @@ from .episode import (
     EpisodeEventKind,
     EpisodeEventRef,
     EpisodeState,
-    make_episode_event_ref_id,
 )
 from .outcome import OutcomeObservation
 
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 class EpisodeLogCorruptionError(RuntimeError):
     """Raised when the Episode JSONL log has unrecoverable mid-log corruption."""
+
+
+class EpisodePersistenceError(RuntimeError):
+    """Raised when an Episode authority operation cannot reach durability."""
 
 _LEGAL_TRANSITIONS: dict[EpisodeState, set[EpisodeState]] = {
     EpisodeState.OPEN: {EpisodeState.SOFT_CLOSED, EpisodeState.INTERRUPTED},
@@ -205,39 +210,33 @@ class InMemoryEpisodeStore:
             if ref.source_event_id:
                 self._source_event_index[ref.source_event_id] = ep.episode_id
 
-    def create_episode(self, episode: Episode) -> Episode:
+    def _candidate_create_episode(self, episode: Episode) -> tuple[Episode, bool]:
         existing = self._episodes.get(episode.episode_id)
-        if existing is not None:
-            return existing
-        self._index_episode(episode)
-        return episode
+        return (existing, False) if existing is not None else (episode, True)
 
-    def get_episode(self, episode_id: str) -> Episode | None:
-        return self._episodes.get(episode_id)
-
-    def append_event_ref(self, episode_id: str, ref: EpisodeEventRef) -> Episode:
+    def _candidate_append_event_ref(
+        self, episode_id: str, ref: EpisodeEventRef
+    ) -> tuple[Episode, bool]:
         ep = self._episodes.get(episode_id)
         if ep is None:
             raise KeyError(episode_id)
         if ep.state is EpisodeState.FINALIZED:
             raise ValueError("cannot append event to FINALIZED Episode")
-        if any(r.ref_id == ref.ref_id for r in ep.event_refs):
-            return ep
+        if any(current.ref_id == ref.ref_id for current in ep.event_refs):
+            return ep, False
         participants = list(ep.participants)
         if ref.actor_entity and all(p.entity_id != ref.actor_entity.entity_id for p in participants):
             participants.append(ref.actor_entity)
-        new_ep = replace(
+        return replace(
             ep,
             last_activity_at=max(ep.last_activity_at, ref.observed_at or ep.last_activity_at),
             participants=tuple(participants),
             event_refs=ep.event_refs + (ref,),
             revision=ep.revision + 1,
             provenance=ep.provenance + (f"event_attached:{ref.ref_id}",),
-        )
-        self._index_episode(new_ep)
-        return new_ep
+        ), True
 
-    def transition_state(
+    def _candidate_transition_state(
         self,
         episode_id: str,
         new_state: EpisodeState,
@@ -251,7 +250,7 @@ class InMemoryEpisodeStore:
         if new_state not in _LEGAL_TRANSITIONS[ep.state]:
             raise ValueError(f"illegal transition {ep.state.value} -> {new_state.value}")
         now = at or datetime.now().astimezone()
-        new_ep = replace(
+        return replace(
             ep,
             state=new_state,
             last_activity_at=max(ep.last_activity_at, now),
@@ -260,8 +259,51 @@ class InMemoryEpisodeStore:
             revision=ep.revision + 1,
             provenance=ep.provenance + (f"state_transition:{reason}",),
         )
-        self._index_episode(new_ep)
-        return new_ep
+
+    def _candidate_record_outcome(
+        self, outcome: OutcomeObservation
+    ) -> tuple[OutcomeObservation, bool]:
+        if self._episodes.get(outcome.target_episode_id) is None:
+            raise ValueError(
+                f"cannot record outcome for unknown target episode: {outcome.target_episode_id}"
+            )
+        existing_id = self._outcome_dedupe.get(outcome.dedupe_key)
+        if existing_id:
+            return self._outcomes[existing_id], False
+        return outcome, True
+
+    def _publish_outcome(self, outcome: OutcomeObservation) -> None:
+        self._outcomes[outcome.observation_id] = outcome
+        self._outcome_dedupe[outcome.dedupe_key] = outcome.observation_id
+
+    def create_episode(self, episode: Episode) -> Episode:
+        candidate, is_new = self._candidate_create_episode(episode)
+        if is_new:
+            self._index_episode(candidate)
+        return candidate
+
+    def get_episode(self, episode_id: str) -> Episode | None:
+        return self._episodes.get(episode_id)
+
+    def append_event_ref(self, episode_id: str, ref: EpisodeEventRef) -> Episode:
+        candidate, is_new = self._candidate_append_event_ref(episode_id, ref)
+        if is_new:
+            self._index_episode(candidate)
+        return candidate
+
+    def transition_state(
+        self,
+        episode_id: str,
+        new_state: EpisodeState,
+        *,
+        reason: str,
+        at: datetime | None = None,
+    ) -> Episode:
+        candidate = self._candidate_transition_state(
+            episode_id, new_state, reason=reason, at=at
+        )
+        self._index_episode(candidate)
+        return candidate
 
     def find_active_by_scope(self, scope_id: str) -> tuple[Episode, ...]:
         return tuple(
@@ -287,16 +329,10 @@ class InMemoryEpisodeStore:
         return self._episodes.get(episode_id) if episode_id else None
 
     def record_outcome(self, outcome: OutcomeObservation) -> OutcomeObservation:
-        if self._episodes.get(outcome.target_episode_id) is None:
-            raise ValueError(
-                f"cannot record outcome for unknown target episode: {outcome.target_episode_id}"
-            )
-        existing_id = self._outcome_dedupe.get(outcome.dedupe_key)
-        if existing_id:
-            return self._outcomes[existing_id]
-        self._outcomes[outcome.observation_id] = outcome
-        self._outcome_dedupe[outcome.dedupe_key] = outcome.observation_id
-        return outcome
+        candidate, is_new = self._candidate_record_outcome(outcome)
+        if is_new:
+            self._publish_outcome(candidate)
+        return candidate
 
     def get_outcomes(self, episode_id: str | None = None) -> tuple[OutcomeObservation, ...]:
         outcomes = list(self._outcomes.values())
@@ -319,6 +355,11 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
 
     def __init__(self, path: str | Path) -> None:
         super().__init__()
+        self._journal_lock = RLock()
+        self._poisoned: EpisodePersistenceError | None = None
+        self._journal_position = 0
+        self._outcome_positions: dict[str, int] = {}
+        self._finalization_positions: dict[str, int] = {}
         self._path = Path(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._replay()
@@ -337,7 +378,27 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
         except Exception:
             logger.exception("Failed to normalize Episode log newline boundary")
 
+    def _ensure_writable(self) -> None:
+        if self._poisoned is not None:
+            raise EpisodePersistenceError("Episode journal is unavailable after a prior uncertain write") from self._poisoned
+
+    def _fsync(self, file_handle: object) -> None:
+        os.fsync(file_handle.fileno())  # type: ignore[union-attr]
+
+    def _restore_offset(self, offset: int) -> bool:
+        try:
+            with self._path.open("r+b") as file_handle:
+                file_handle.truncate(offset)
+                file_handle.flush()
+                self._fsync(file_handle)
+            return True
+        except Exception:
+            logger.exception("Episode journal rollback failed at offset %d", offset)
+            return False
+
     def _append_log(self, operation_kind: str, episode_id: str, payload: dict) -> None:
+        """Append one authority record and return only after its durable commit."""
+        self._ensure_writable()
         record = {
             "schema_version": self.SCHEMA_VERSION,
             "operation_id": uuid4().hex,
@@ -346,18 +407,41 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
             "episode_id": episode_id,
             "payload": payload,
         }
+        serialized = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        offset = self._path.stat().st_size if self._path.exists() else 0
         try:
-            with self._path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except Exception:
-            logger.exception("Episode append failed; in-memory state remains available")
+            with self._path.open("ab") as file_handle:
+                file_handle.write(serialized)
+                file_handle.flush()
+                self._fsync(file_handle)
+        except Exception as exc:
+            if not self._restore_offset(offset):
+                self._poisoned = EpisodePersistenceError("Episode journal rollback could not be proven")
+            raise EpisodePersistenceError(
+                f"Episode journal append failed for {operation_kind}"
+            ) from exc
 
-    _EPISODE_SNAPSHOT_OPS = {
+    def _publish_committed_episode(
+        self, operation_kind: str, episode: Episode
+    ) -> None:
+        position = self._journal_position + 1
+        self._index_episode(episode)
+        self._journal_position = position
+        if episode.state is EpisodeState.FINALIZED:
+            self._finalization_positions.setdefault(episode.episode_id, position)
+
+    def _publish_committed_outcome(self, outcome: OutcomeObservation) -> None:
+        position = self._journal_position + 1
+        self._publish_outcome(outcome)
+        self._journal_position = position
+        self._outcome_positions[outcome.observation_id] = position
+
+    _EPISODE_SNAPSHOT_OPS: ClassVar[frozenset[str]] = frozenset({
         "EPISODE_CREATED",
         "EVENT_ATTACHED",
         "STATE_TRANSITIONED",
         "RECOVERY_TRANSITIONED",
-    }
+    })
 
     @staticmethod
     def _is_recoverable_truncated_json_fragment(fragment: str, exc: json.JSONDecodeError) -> bool:
@@ -374,9 +458,7 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
             return True
         # Python stdlib reports the opening quote position for unterminated
         # strings; EOF position alone is therefore not sufficient for this case.
-        if exc.msg == "Unterminated string starting at":
-            return True
-        return False
+        return exc.msg == "Unterminated string starting at"
 
     def _replay(self) -> None:
         if not self._path.exists():
@@ -406,7 +488,7 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
 
             try:
                 record = json.loads(line)
-                self._apply_replay_record(record, line_no)
+                self._apply_replay_record(record, line_no, position + 1)
                 valid_raw.append(raw_line)
             except EpisodeLogCorruptionError:
                 raise
@@ -448,7 +530,7 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
             self._path.write_text("".join(valid_raw), encoding="utf-8")
             logger.info("Truncated incomplete Episode tail at %s", self._path)
 
-    def _apply_replay_record(self, record: dict, line_no: int) -> None:
+    def _apply_replay_record(self, record: dict, line_no: int, journal_position: int) -> None:
         if not isinstance(record, dict):
             raise EpisodeLogCorruptionError(
                 f"replay record at line {line_no} is not an object"
@@ -467,6 +549,9 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
         if op in self._EPISODE_SNAPSHOT_OPS:
             ep = _episode_from_dict(payload)
             self._index_episode(ep)
+            if ep.state is EpisodeState.FINALIZED:
+                self._finalization_positions.setdefault(ep.episode_id, journal_position)
+            self._journal_position = journal_position
             return
         if op == "OUTCOME_RECORDED":
             outcome = _outcome_from_dict(payload)
@@ -476,6 +561,8 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
                 )
             self._outcomes[outcome.observation_id] = outcome
             self._outcome_dedupe[outcome.dedupe_key] = outcome.observation_id
+            self._outcome_positions[outcome.observation_id] = journal_position
+            self._journal_position = journal_position
             return
         raise EpisodeLogCorruptionError(
             f"unknown operation_kind at line {line_no}: {op!r}"
@@ -491,16 +578,32 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
                 )
 
     def create_episode(self, episode: Episode) -> Episode:
-        ep = super().create_episode(episode)
-        self._append_log("EPISODE_CREATED", ep.episode_id, _episode_to_dict(ep))
-        return ep
+        with self._journal_lock:
+            self._ensure_writable()
+            candidate, is_new = self._candidate_create_episode(episode)
+            if not is_new:
+                return candidate
+            self._append_log("EPISODE_CREATED", candidate.episode_id, _episode_to_dict(candidate))
+            try:
+                self._publish_committed_episode("EPISODE_CREATED", candidate)
+            except Exception as exc:
+                self._poisoned = EpisodePersistenceError("Episode journal committed but in-memory publish failed")
+                raise EpisodePersistenceError("Episode creation committed but could not be published") from exc
+            return candidate
 
     def append_event_ref(self, episode_id: str, ref: EpisodeEventRef) -> Episode:
-        ep = super().append_event_ref(episode_id, ref)
-        # Only append if a new snapshot was produced.
-        if ep.event_refs and ep.event_refs[-1].ref_id == ref.ref_id:
-            self._append_log("EVENT_ATTACHED", ep.episode_id, _episode_to_dict(ep))
-        return ep
+        with self._journal_lock:
+            self._ensure_writable()
+            candidate, is_new = self._candidate_append_event_ref(episode_id, ref)
+            if not is_new:
+                return candidate
+            self._append_log("EVENT_ATTACHED", candidate.episode_id, _episode_to_dict(candidate))
+            try:
+                self._publish_committed_episode("EVENT_ATTACHED", candidate)
+            except Exception as exc:
+                self._poisoned = EpisodePersistenceError("Episode journal committed but in-memory publish failed")
+                raise EpisodePersistenceError("Episode event committed but could not be published") from exc
+            return candidate
 
     def transition_state(
         self,
@@ -510,12 +613,47 @@ class AppendOnlyEpisodeStore(InMemoryEpisodeStore):
         reason: str,
         at: datetime | None = None,
     ) -> Episode:
-        ep = super().transition_state(episode_id, new_state, reason=reason, at=at)
-        self._append_log("STATE_TRANSITIONED", ep.episode_id, _episode_to_dict(ep))
-        return ep
+        with self._journal_lock:
+            self._ensure_writable()
+            candidate = self._candidate_transition_state(
+                episode_id, new_state, reason=reason, at=at
+            )
+            self._append_log("STATE_TRANSITIONED", candidate.episode_id, _episode_to_dict(candidate))
+            try:
+                self._publish_committed_episode("STATE_TRANSITIONED", candidate)
+            except Exception as exc:
+                self._poisoned = EpisodePersistenceError("Episode journal committed but in-memory publish failed")
+                raise EpisodePersistenceError("Episode transition committed but could not be published") from exc
+            return candidate
 
     def record_outcome(self, outcome: OutcomeObservation) -> OutcomeObservation:
-        existing = super().record_outcome(outcome)
-        if existing.observation_id == outcome.observation_id:
-            self._append_log("OUTCOME_RECORDED", outcome.target_episode_id, _outcome_to_dict(outcome))
-        return existing
+        with self._journal_lock:
+            self._ensure_writable()
+            candidate, is_new = self._candidate_record_outcome(outcome)
+            if not is_new:
+                return candidate
+            self._append_log("OUTCOME_RECORDED", candidate.target_episode_id, _outcome_to_dict(candidate))
+            try:
+                self._publish_committed_outcome(candidate)
+            except Exception as exc:
+                self._poisoned = EpisodePersistenceError("Episode journal committed but in-memory publish failed")
+                raise EpisodePersistenceError("Outcome committed but could not be published") from exc
+            return candidate
+
+    def get_finalization_boundary(self, episode_id: str) -> int | None:
+        """Return the first durable FINALIZED journal position for an Episode."""
+        with self._journal_lock:
+            return self._finalization_positions.get(episode_id)
+
+    def get_finalized_outcomes(self, episode_id: str) -> tuple[OutcomeObservation, ...]:
+        """Return Outcomes committed strictly before the durable FINALIZED boundary."""
+        with self._journal_lock:
+            boundary = self._finalization_positions.get(episode_id)
+            if boundary is None:
+                return ()
+            return tuple(
+                outcome
+                for outcome_id, outcome in self._outcomes.items()
+                if outcome.target_episode_id == episode_id
+                and self._outcome_positions.get(outcome_id, boundary) < boundary
+            )
