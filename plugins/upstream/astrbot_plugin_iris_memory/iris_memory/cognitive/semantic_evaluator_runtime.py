@@ -1,10 +1,10 @@
 """Bounded production evaluator runtime for P2r.1a-E.
 
-The module prepares an explicit-correction evaluator without enabling it in
-the normal runtime.  It deliberately owns no ReviewEvidence or behavioural
-policy.  A future caller may compose the bounded worker with an already
-authorised AstrBot ``Provider``; the production factory continues to create
-no evaluator and therefore performs no model calls.
+The module owns the explicitly configured explicit-correction evaluator.  It
+deliberately owns no ReviewEvidence or behavioural policy.  The production
+factory remains fail-closed by default and only binds the frozen
+``chatgpt_codex_source/gpt-5.6-luna`` provider when the caller opts in with
+the exact provider identity and the profile hash validates.
 
 Raw inbound content is transient.  This module never sends it through the
 Iris LLM manager (which records prompts in its run log), never writes it to a
@@ -20,6 +20,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol
 
@@ -698,6 +699,32 @@ class BoundedSemanticEvaluatorWorkerV1:
         self._metrics["scheduled"] += 1
         return future
 
+    def schedule_after_inbound_commit(
+        self,
+        *,
+        resolved_event: object,
+        inbound_fact: object,
+        source_platform_message_identity: object,
+    ) -> asyncio.Future[InboundSemanticActAuthorityV1 | None] | None:
+        """Queue one validated inbound fact for asynchronous evaluation.
+
+        The capture hook is synchronous, while the bound AstrBot provider is
+        asynchronous.  This entry point performs the same immutable source
+        validation as the authority service and submits only the resulting
+        evaluator input to the bounded worker.  It never accepts a caller
+        decision and returns ``None`` on malformed/unavailable input.
+        """
+        try:
+            evaluator_input = self.authority_service.prepare_evaluator_input(
+                resolved_event=resolved_event,  # type: ignore[arg-type]
+                inbound_fact=inbound_fact,  # type: ignore[arg-type]
+                source_platform_message_identity=source_platform_message_identity,  # type: ignore[arg-type]
+            )
+        except (InboundSemanticAuthorityIntegrityError, TypeError, ValueError):
+            self._metrics["failed"] += 1
+            return None
+        return self.schedule(evaluator_input)
+
     async def start(self) -> None:
         if self._closed:
             raise SemanticEvaluatorRuntimeError("worker is closed")
@@ -790,10 +817,64 @@ class BoundedSemanticEvaluatorWorkerV1:
         self._closed = True
 
 
-def create_runtime_semantic_evaluator(*_args: object, **_kwargs: object) -> None:
-    """Production boundary: evaluator remains disabled until explicit enablement."""
+RUNTIME_PROVIDER_ID = "chatgpt_codex_source/gpt-5.6-luna"
+RUNTIME_MODEL = "gpt-5.6-luna"
+EXPECTED_RUNTIME_PROFILE_HASH = (
+    "sha256:9f4dd78f9d04453044a633d2c8f9e653e16845000750c7d2f705d54a76624f2e"
+)
 
-    return
+
+def create_runtime_semantic_evaluator(
+    data_dir: str | Path,
+    *,
+    provider: object | None = None,
+    enabled: bool = False,
+    provider_id: str = RUNTIME_PROVIDER_ID,
+    policy: SemanticEvaluatorExecutionPolicyV1 | None = None,
+) -> BoundedSemanticEvaluatorWorkerV1 | None:
+    """Build the explicitly enabled production E1 worker.
+
+    The default remains fail-closed.  A caller must opt in and provide the
+    exact configured provider identity; metadata/profile mismatches raise a
+    sanitized configuration error for the startup boundary to disable.
+    """
+
+    if enabled is not True:
+        return None
+    if provider_id != RUNTIME_PROVIDER_ID or provider is None:
+        raise SemanticEvaluatorConfigurationError("explicit provider binding is invalid")
+    metadata = _provider_metadata(provider)
+    if metadata[0] != RUNTIME_PROVIDER_ID or metadata[3] != RUNTIME_MODEL:
+        raise SemanticEvaluatorConfigurationError("provider is not the frozen E1 target")
+    profile = ExplicitCorrectionEvaluatorProfileV1(
+        provider_id=metadata[0],
+        provider_type=metadata[1],
+        provider_family=metadata[2],
+        model=metadata[3],
+        deployment=metadata[4],
+        model_version=metadata[5],
+    )
+    if profile.profile_payload_hash != EXPECTED_RUNTIME_PROFILE_HASH:
+        raise SemanticEvaluatorConfigurationError("runtime profile hash mismatch")
+    authority_profile = profile.to_authority_profile()
+    from .inbound_semantic_authority import InboundSemanticActAuthorityStoreV1
+
+    authority_path = Path(data_dir) / "cognitive" / "p2r1a-inbound-semantic-authority" / "authority.jsonl"
+    adapter = AstrBotProviderSemanticAdapterV1(provider, profile)
+    service = InboundSemanticActAuthorityServiceV1(
+        InboundSemanticActAuthorityStoreV1(authority_path),
+        profile=authority_profile,
+        evaluator=adapter,
+    )
+    worker = BoundedSemanticEvaluatorWorkerV1(
+        service,
+        adapter,
+        profile,
+        policy=policy or SemanticEvaluatorExecutionPolicyV1(),
+    )
+    global PRODUCTION_SEMANTIC_EVALUATOR
+    PRODUCTION_SEMANTIC_EVALUATOR = "EXPLICIT_CORRECTION_V1"
+    return worker
 
 
 def create_test_semantic_evaluator_worker(
@@ -828,12 +909,20 @@ P2A_V1_PRODUCTION_PROMOTABLE_RULES = frozenset()
 PRODUCTION_VALIDATED_EVIDENCE_COUNT = 0
 
 
+def reset_production_semantic_evaluator_status() -> None:
+    """Clear the process-local status when explicit startup binding is off."""
+
+    global PRODUCTION_SEMANTIC_EVALUATOR
+    PRODUCTION_SEMANTIC_EVALUATOR = None
+
+
 __all__ = [
     "ALLOWED_DECISIONS",
     "CANONICAL_PARSER_RULES",
     "CANONICAL_SYSTEM_PROMPT",
     "CANONICAL_TASK_TEMPLATE",
     "EXPECTED_PROMPT_TEMPLATE_HASH",
+    "EXPECTED_RUNTIME_PROFILE_HASH",
     "INPUT_SCHEMA_VERSION",
     "OUTPUT_SCHEMA_VERSION",
     "P2A_V1_PRODUCTION_PROMOTABLE_RULES",
@@ -845,6 +934,8 @@ __all__ = [
     "PROFILE_VERSION",
     "PROMPT_TEMPLATE_HASH",
     "PROMPT_TEMPLATE_VERSION",
+    "RUNTIME_MODEL",
+    "RUNTIME_PROVIDER_ID",
     "AstrBotProviderSemanticAdapterV1",
     "BoundedSemanticEvaluatorWorkerV1",
     "ExplicitCorrectionEvaluatorProfileV1",
@@ -858,4 +949,5 @@ __all__ = [
     "create_runtime_semantic_evaluator",
     "create_test_semantic_evaluator_worker",
     "parse_closed_decision_output",
+    "reset_production_semantic_evaluator_status",
 ]

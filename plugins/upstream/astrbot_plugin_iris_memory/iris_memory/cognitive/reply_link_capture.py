@@ -108,6 +108,15 @@ class P2r0CaptureService:
     def semantic_authority_service(self) -> object | None:
         return self._semantic_authority_service
 
+    def bind_semantic_authority_service(self, service: object | None) -> None:
+        """Bind the runtime-owned semantic worker after provider startup.
+
+        AstrBot may finish loading providers after plugin initialization.  The
+        plugin can therefore attach its already validated worker before the
+        next inbound capture without replacing the factual P2r0 store.
+        """
+        self._semantic_authority_service = service
+
     def capture_host_send_result(self, event: object, result: object) -> CaptureResult:
         """Persist eligible MESSAGE identities from one finalized H0 result.
 
@@ -202,13 +211,24 @@ class P2r0CaptureService:
             if semantic_service is not None:
                 try:
                     resolved_event = getattr(getattr(attached, "experience", None), "event", None)
-                    evaluate = getattr(semantic_service, "evaluate_after_inbound_commit", None)
-                    if callable(evaluate):
-                        evaluate(
+                    schedule = getattr(semantic_service, "schedule_after_inbound_commit", None)
+                    if callable(schedule):
+                        # Production E1 is asynchronous.  The bounded worker
+                        # owns provider execution and persistence; this hook
+                        # only submits the already-committed immutable input.
+                        schedule(
                             resolved_event=resolved_event,
                             inbound_fact=fact,
                             source_platform_message_identity=source,
                         )
+                    else:
+                        evaluate = getattr(semantic_service, "evaluate_after_inbound_commit", None)
+                        if callable(evaluate):
+                            evaluate(
+                                resolved_event=resolved_event,
+                                inbound_fact=fact,
+                                source_platform_message_identity=source,
+                            )
                 except Exception as exc:  # noqa: BLE001 - semantic capture never controls host
                     logger.warning("P2r1a semantic authority capture rejected: %s", exc)
             return CaptureResult(inbound_facts=1)
@@ -315,6 +335,7 @@ class P2r0CaptureService:
 def create_runtime_capture_service(
     data_dir: str | Path,
     runtime: CognitiveRuntime,
+    semantic_authority_service: object | None = None,
 ) -> P2r0CaptureService:
     """Create runtime capture with the production semantic service composition.
 
@@ -325,15 +346,16 @@ def create_runtime_capture_service(
     root = Path(data_dir) / "cognitive" / "p2r0-reply-link-facts"
     root.mkdir(parents=True, exist_ok=True)
     store = P2r0Store(root / "facts.jsonl")
-    semantic_service = None
-    try:
-        from .inbound_semantic_authority import (
-            create_runtime_semantic_authority_service,
-        )
+    semantic_service = semantic_authority_service
+    if semantic_service is None:
+        try:
+            from .inbound_semantic_authority import (
+                create_runtime_semantic_authority_service,
+            )
 
-        semantic_service = create_runtime_semantic_authority_service(data_dir)
-    except Exception:
-        logger.exception("P2r1a semantic authority store unavailable; P2r0 remains enabled")
+            semantic_service = create_runtime_semantic_authority_service(data_dir)
+        except Exception:
+            logger.exception("P2r1a semantic authority store unavailable; P2r0 remains enabled")
     return P2r0CaptureService(store, runtime, semantic_service)
 
 

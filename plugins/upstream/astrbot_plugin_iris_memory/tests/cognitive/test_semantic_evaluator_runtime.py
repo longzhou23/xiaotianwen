@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
+from iris_memory.cognitive.contracts import ResolvedEvent
 from iris_memory.cognitive.inbound_semantic_authority import (
     InboundSemanticActAuthorityServiceV1,
     InboundSemanticActAuthorityStoreV1,
@@ -15,10 +16,21 @@ from iris_memory.cognitive.inbound_semantic_authority import (
     InboundSemanticDecision,
     create_runtime_semantic_authority_service,
 )
-from iris_memory.cognitive.reply_link_authority import PlatformMessageIdentityV1
+from iris_memory.cognitive.reply_link_authority import (
+    InboundReplyReferenceFactV1,
+    PlatformMessageIdentityV1,
+)
+
+try:
+    from main import IrisMemoryPlugin
+except ImportError:  # pragma: no cover - package-only test discovery
+    IrisMemoryPlugin = None  # type: ignore[assignment,misc]
 from iris_memory.cognitive.semantic_evaluator_runtime import (
     CANONICAL_SYSTEM_PROMPT,
     EXPECTED_PROMPT_TEMPLATE_HASH,
+    EXPECTED_RUNTIME_PROFILE_HASH,
+    RUNTIME_MODEL,
+    RUNTIME_PROVIDER_ID,
     AstrBotProviderSemanticAdapterV1,
     ExplicitCorrectionEvaluatorProfileV1,
     SemanticEvaluatorExecutionPolicyV1,
@@ -64,6 +76,16 @@ class _FakeProvider:
             return SimpleNamespace(completion_text=self.output)
         finally:
             self.active -= 1
+
+
+class _TargetProvider(_FakeProvider):
+    def meta(self):
+        return SimpleNamespace(
+            id=RUNTIME_PROVIDER_ID,
+            type="chatgpt_codex",
+            provider_type="chat_completion",
+            model=RUNTIME_MODEL,
+        )
 
 
 def _profile() -> ExplicitCorrectionEvaluatorProfileV1:
@@ -366,3 +388,109 @@ def test_runtime_factory_is_disabled(tmp_path: Path) -> None:
     assert service.profile is None
     assert service.evaluator is None
     assert create_runtime_semantic_evaluator(tmp_path) is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_runtime_factory_binds_exact_target(tmp_path: Path) -> None:
+    provider = _TargetProvider()
+    provider.release.set()
+    worker = create_runtime_semantic_evaluator(
+        tmp_path,
+        provider=provider,
+        provider_id=RUNTIME_PROVIDER_ID,
+        enabled=True,
+    )
+    assert worker is not None
+    assert worker.profile.profile_payload_hash == EXPECTED_RUNTIME_PROFILE_HASH
+    assert worker.profile.provider_id == RUNTIME_PROVIDER_ID
+    await worker.start()
+    future = worker.schedule(_input(worker.profile))
+    assert future is not None
+    authority = await future
+    assert authority is not None
+    assert authority.decision is InboundSemanticDecision.MATCH
+    await worker.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_worker_capture_entrypoint_queues_only_validated_input(tmp_path: Path) -> None:
+    provider = _TargetProvider()
+    provider.release.set()
+    worker = create_runtime_semantic_evaluator(
+        tmp_path,
+        provider=provider,
+        provider_id=RUNTIME_PROVIDER_ID,
+        enabled=True,
+    )
+    assert worker is not None
+    identity = PlatformMessageIdentityV1("napcat", "bot", "group", "event-1")
+    event = ResolvedEvent(
+        event_id="event-1",
+        source="napcat",
+        occurred_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        session_id="group",
+        mode="casual_group_chat",
+        content="不是，我说的是……",
+        actor=None,
+    )
+    fact = InboundReplyReferenceFactV1.create(
+        source_event_id="event-1",
+        source_platform_message_identity=identity,
+        reply_target_platform_message_identity=PlatformMessageIdentityV1(
+            "napcat", "bot", "group", "target-1"
+        ),
+    )
+    await worker.start()
+    future = worker.schedule_after_inbound_commit(
+        resolved_event=event,
+        inbound_fact=fact,
+        source_platform_message_identity=identity,
+    )
+    assert future is not None
+    authority = await future
+    assert authority is not None
+    assert authority.decision is InboundSemanticDecision.MATCH
+    await worker.shutdown()
+
+
+def test_explicit_runtime_factory_fails_closed_on_wrong_target(tmp_path: Path) -> None:
+    provider = _FakeProvider()
+    with pytest.raises(ValueError):
+        create_runtime_semantic_evaluator(
+            tmp_path,
+            provider=provider,
+            provider_id=RUNTIME_PROVIDER_ID,
+            enabled=True,
+        )
+
+
+def test_plugin_startup_enablement_is_explicit_and_fail_closed(tmp_path: Path) -> None:
+    if IrisMemoryPlugin is None:  # pragma: no cover - defensive package import
+        pytest.skip("main plugin module unavailable")
+
+    class _Config:
+        def __init__(self, enabled: object, provider_id: object) -> None:
+            self.enabled = enabled
+            self.provider_id = provider_id
+
+        def get(self, key: str, default: object = None) -> object:
+            return {
+                "semantic_evaluator.enable": self.enabled,
+                "semantic_evaluator.provider_id": self.provider_id,
+            }.get(key, default)
+
+    disabled = object.__new__(IrisMemoryPlugin)
+    disabled.config = _Config(True, "")
+    disabled.context = SimpleNamespace(get_provider_by_id=lambda _provider_id: _TargetProvider())
+    disabled.data_dir = tmp_path / "disabled"
+    disabled._init_semantic_evaluator()
+    assert disabled._semantic_evaluator is None
+    assert disabled._production_semantic_evaluator is None
+
+    enabled = object.__new__(IrisMemoryPlugin)
+    enabled.config = _Config(True, RUNTIME_PROVIDER_ID)
+    enabled.context = SimpleNamespace(get_provider_by_id=lambda _provider_id: _TargetProvider())
+    enabled.data_dir = tmp_path / "enabled"
+    enabled._init_semantic_evaluator()
+    assert enabled._semantic_evaluator is not None
+    assert enabled._production_semantic_evaluator == "EXPLICIT_CORRECTION_V1"

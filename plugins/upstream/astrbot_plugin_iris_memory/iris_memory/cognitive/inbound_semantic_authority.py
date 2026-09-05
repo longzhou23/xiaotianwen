@@ -699,20 +699,10 @@ class InboundSemanticActAuthorityServiceV1:
             raise InboundSemanticAuthorityIntegrityError("event and inbound fact source IDs differ")
         if source_platform_message_identity != inbound_fact.source_platform_message_identity:
             raise InboundSemanticAuthorityIntegrityError("event and inbound fact platform identities differ")
-        content = resolved_event.content
-        if type(content) is not str:
-            raise InboundSemanticAuthorityIntegrityError("ResolvedEvent content is not an exact string")
-        content_hash = canonical_content_payload_hash(content)
-        evaluator_input = InboundSemanticEvaluationInputV1(
-            semantic_kind=InboundSemanticKind.EXPLICIT_CORRECTION,
-            source_event_id=resolved_event.event_id,
+        evaluator_input = self.prepare_evaluator_input(
+            resolved_event=resolved_event,
+            inbound_fact=inbound_fact,
             source_platform_message_identity=source_platform_message_identity,
-            inbound_reply_fact_id=inbound_fact.fact_id,
-            content=content,
-            content_encoding=INBOUND_SEMANTIC_CONTENT_ENCODING,
-            content_payload_hash=content_hash,
-            evaluator_profile_id=self.profile.profile_id,
-            evaluator_profile_hash=self.profile.profile_payload_hash,
         )
         try:
             result = self.evaluator.evaluate(evaluator_input) if callable(getattr(self.evaluator, "evaluate", None)) else self.evaluator(evaluator_input)  # type: ignore[misc]
@@ -733,6 +723,46 @@ class InboundSemanticActAuthorityServiceV1:
             provenance=("inbound_fact_committed", "capture_time_evaluation"),
         )
         return self.store.record_authority(authority, profile=self.profile)
+
+    def prepare_evaluator_input(
+        self,
+        *,
+        resolved_event: ResolvedEvent,
+        inbound_fact: InboundReplyReferenceFactV1,
+        source_platform_message_identity: PlatformMessageIdentityV1,
+    ) -> InboundSemanticEvaluationInputV1:
+        """Build one detached input after validating the committed fact chain.
+
+        This is shared by the synchronous compatibility path and the bounded
+        production worker.  It deliberately returns only the exact immutable
+        evaluator input; no caller-provided decision is accepted here.
+        """
+        if self.evaluator is None or self.profile is None:
+            raise InboundSemanticAuthorityIntegrityError("semantic evaluator is unavailable")
+        if type(resolved_event) is not ResolvedEvent:
+            raise InboundSemanticAuthorityIntegrityError("semantic input requires the attached ResolvedEvent")
+        if type(inbound_fact) is not InboundReplyReferenceFactV1:
+            raise InboundSemanticAuthorityIntegrityError("semantic input requires the committed inbound fact")
+        if type(source_platform_message_identity) is not PlatformMessageIdentityV1:
+            raise InboundSemanticAuthorityIntegrityError("semantic input requires source platform identity")
+        if resolved_event.event_id != inbound_fact.source_event_id:
+            raise InboundSemanticAuthorityIntegrityError("event and inbound fact source IDs differ")
+        if source_platform_message_identity != inbound_fact.source_platform_message_identity:
+            raise InboundSemanticAuthorityIntegrityError("event and inbound fact platform identities differ")
+        content = resolved_event.content
+        if type(content) is not str:
+            raise InboundSemanticAuthorityIntegrityError("ResolvedEvent content is not an exact string")
+        return InboundSemanticEvaluationInputV1(
+            semantic_kind=InboundSemanticKind.EXPLICIT_CORRECTION,
+            source_event_id=resolved_event.event_id,
+            source_platform_message_identity=source_platform_message_identity,
+            inbound_reply_fact_id=inbound_fact.fact_id,
+            content=content,
+            content_encoding=INBOUND_SEMANTIC_CONTENT_ENCODING,
+            content_payload_hash=canonical_content_payload_hash(content),
+            evaluator_profile_id=self.profile.profile_id,
+            evaluator_profile_hash=self.profile.profile_payload_hash,
+        )
 
     async def evaluate_detached_input(
         self,

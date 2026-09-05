@@ -36,54 +36,67 @@ plugin_root = Path(__file__).parent
 if str(plugin_root) not in sys.path:
     sys.path.insert(0, str(plugin_root))
 
-from iris_memory.config import init_config, Config
-
 from astrbot.api import AstrBotConfig
-from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.agent.message import TextPart
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
-
-from iris_memory.core import (
-    ComponentManager,
-    get_logger,
-    create_components,
-    initialize_components,
-    shutdown_components,
-    handle_user_message,
-    preprocess_llm_request,
-    handle_llm_response,
-    handle_agent_done,
-    handle_pre_request_cleanup,
-    handle_initiate_backfill,
-    set_component_manager,
-    get_run_log_manager,
+from iris_memory.cognitive.contracts import EventExecutionContext, RuntimeMode
+from iris_memory.cognitive.episode import EpisodeState
+from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
+from iris_memory.cognitive.episode_store import AppendOnlyEpisodeStore
+from iris_memory.cognitive.iris_adapter import get_cognitive_runtime
+from iris_memory.cognitive.legacy_proactive import LegacyIrisProactiveSignalAdapter
+from iris_memory.cognitive.reply_link_archive import (
+    ProductionReviewCompletionCoordinator,
+    create_runtime_archive_service,
 )
-from iris_memory.tools import (
-    SaveKnowledgeTool,
-    SaveMemoryTool,
-    SearchMemoryTool,
-    CorrectMemoryTool,
-    SearchKnowledgeGraphTool,
-    GetProfileTool,
+from iris_memory.cognitive.reply_link_capture import create_runtime_capture_service
+from iris_memory.cognitive.review_store import AppendOnlyReviewStore
+from iris_memory.cognitive.semantic_evaluator_runtime import (
+    EXPECTED_RUNTIME_PROFILE_HASH,
+    RUNTIME_MODEL,
+    RUNTIME_PROVIDER_ID,
+    BoundedSemanticEvaluatorWorkerV1,
+    SemanticEvaluatorConfigurationError,
+    create_runtime_semantic_evaluator,
+    reset_production_semantic_evaluator_status,
 )
-from iris_memory.web import register_all_routes
-from iris_memory.llm import LLMManager
-from iris_memory.llm_modules import proactive_reply_module
 from iris_memory.commands import (
-    get_registry,
-    execute_command,
+    AllCommandHandler,
+    EvolutionCommandHandler,
     L1CommandHandler,
     L2CommandHandler,
     L3CommandHandler,
-    ProfileCommandHandler,
-    AllCommandHandler,
     LearningCommandHandler,
-    EvolutionCommandHandler,
+    ProfileCommandHandler,
+    execute_command,
+    get_registry,
 )
+from iris_memory.config import Config, init_config
+from iris_memory.core import (
+    ComponentManager,
+    create_components,
+    get_logger,
+    get_run_log_manager,
+    handle_agent_done,
+    handle_initiate_backfill,
+    handle_llm_response,
+    handle_pre_request_cleanup,
+    handle_user_message,
+    initialize_components,
+    preprocess_llm_request,
+    set_component_manager,
+    shutdown_components,
+)
+from iris_memory.extras import ErrorFriendlyProcessor, MarkdownStripper
+from iris_memory.llm import LLMManager
+from iris_memory.llm_modules import proactive_reply_module
 from iris_memory.proactive.admin import AdminCommands
 from iris_memory.proactive.api import (
     register_web_apis as register_reply_web_apis,
+)
+from iris_memory.proactive.api import (
     sync_stats_group_state,
 )
 from iris_memory.proactive.config import ConfigManager as ReplyConfigManager
@@ -99,26 +112,22 @@ from iris_memory.proactive.perception import (
     SlidingWindow,
     WindowMessage,
 )
-from iris_memory.proactive.prompts import SPEAK_HINTS
 from iris_memory.proactive.proactive import ProactiveEngine
+from iris_memory.proactive.prompts import SPEAK_HINTS
 from iris_memory.proactive.signals import SignalGate
 from iris_memory.proactive.state import StateManager
 from iris_memory.proactive.stats import StatsCollector
 from iris_memory.proactive.time_hint import resolve_datetime_reminder
 from iris_memory.proactive.tools import ToolContext
-from iris_memory.cognitive.iris_adapter import get_cognitive_runtime
-from iris_memory.cognitive.legacy_proactive import LegacyIrisProactiveSignalAdapter
-from iris_memory.cognitive.contracts import EventExecutionContext, RuntimeMode
-from iris_memory.cognitive.episode import EpisodeState
-from iris_memory.cognitive.episode_store import AppendOnlyEpisodeStore
-from iris_memory.cognitive.episode_shadow import EpisodeShadowObserver
-from iris_memory.cognitive.reply_link_archive import (
-    ProductionReviewCompletionCoordinator,
-    create_runtime_archive_service,
+from iris_memory.tools import (
+    CorrectMemoryTool,
+    GetProfileTool,
+    SaveKnowledgeTool,
+    SaveMemoryTool,
+    SearchKnowledgeGraphTool,
+    SearchMemoryTool,
 )
-from iris_memory.cognitive.reply_link_capture import create_runtime_capture_service
-from iris_memory.cognitive.review_store import AppendOnlyReviewStore
-from iris_memory.extras import ErrorFriendlyProcessor, MarkdownStripper
+from iris_memory.web import register_all_routes
 
 logger = get_logger("main")
 
@@ -227,6 +236,10 @@ class IrisMemoryPlugin(Star):
             self._inbound_semantic_authority = None
             self._p2r0_archive = None
             self._production_review_completion = None
+            self._semantic_evaluator: BoundedSemanticEvaluatorWorkerV1 | None = None
+            self._production_semantic_evaluator: str | None = None
+            self._semantic_evaluator_requested = False
+            self._semantic_evaluator_retry_task: asyncio.Task | None = None
             self._reply_in_progress: dict[str, float] = {}
             self._passive_active: dict[str, float] = {}
             self._triggering: dict[str, float] = {}
@@ -289,7 +302,11 @@ class IrisMemoryPlugin(Star):
         """Own and replay the single P2r0 factual capture store for this runtime."""
         try:
             runtime = get_cognitive_runtime()
-            self._p2r0_capture = create_runtime_capture_service(self.data_dir, runtime)
+            self._p2r0_capture = create_runtime_capture_service(
+                self.data_dir,
+                runtime,
+                semantic_authority_service=self._semantic_evaluator,
+            )
             self._inbound_semantic_authority = self._p2r0_capture.semantic_authority_service
             logger.info("P2r0 factual capture enabled")
         except Exception:
@@ -297,6 +314,94 @@ class IrisMemoryPlugin(Star):
             logger.exception(
                 "P2r0 factual capture initialization failed; capture remains unavailable"
             )
+
+    def _init_semantic_evaluator(self) -> None:
+        """Bind the explicitly configured E1 provider, fail-closed on startup."""
+        self._semantic_evaluator = None
+        self._production_semantic_evaluator = None
+        reset_production_semantic_evaluator_status()
+        enabled = self.config.get("semantic_evaluator.enable", False)
+        if type(enabled) is not bool or not enabled:
+            self._semantic_evaluator_requested = False
+            logger.info("P2r1a-E semantic evaluator disabled by configuration")
+            return
+        provider_id = self.config.get("semantic_evaluator.provider_id", "")
+        if type(provider_id) is not str or provider_id != RUNTIME_PROVIDER_ID:
+            self._semantic_evaluator_requested = False
+            logger.error("P2r1a-E semantic evaluator disabled: exact provider is not configured")
+            return
+        self._semantic_evaluator_requested = True
+        try:
+            get_provider = getattr(self.context, "get_provider_by_id", None)
+            provider = get_provider(provider_id) if callable(get_provider) else None
+            if provider is None:
+                logger.warning(
+                    "P2r1a-E semantic evaluator waiting for the explicitly configured provider"
+                )
+                return
+            worker = create_runtime_semantic_evaluator(
+                self.data_dir,
+                provider=provider,
+                enabled=True,
+                provider_id=provider_id,
+            )
+            if worker is None or worker.profile.profile_payload_hash != EXPECTED_RUNTIME_PROFILE_HASH:
+                raise SemanticEvaluatorConfigurationError("runtime profile validation failed")
+            if worker.profile.model != RUNTIME_MODEL:
+                raise SemanticEvaluatorConfigurationError("runtime model validation failed")
+            self._semantic_evaluator = worker
+            self._production_semantic_evaluator = "EXPLICIT_CORRECTION_V1"
+            logger.info(
+                "P2r1a-E semantic evaluator bound to %s (profile %s)",
+                RUNTIME_PROVIDER_ID,
+                EXPECTED_RUNTIME_PROFILE_HASH,
+            )
+        except Exception:  # noqa: BLE001 - startup boundary is fail-closed
+            # Configuration/provider failures must never prevent ordinary
+            # AstrBot startup or host replies.  Do not log provider details.
+            self._semantic_evaluator = None
+            self._production_semantic_evaluator = None
+            self._semantic_evaluator_requested = False
+            reset_production_semantic_evaluator_status()
+            logger.error("P2r1a-E semantic evaluator disabled during startup validation")
+
+    async def _start_semantic_evaluator(self) -> None:
+        worker = self._semantic_evaluator
+        if worker is None:
+            return
+        try:
+            await worker.start()
+            logger.info("P2r1a-E bounded semantic evaluator worker started")
+        except Exception:  # noqa: BLE001 - startup boundary is fail-closed
+            self._semantic_evaluator = None
+            self._production_semantic_evaluator = None
+            self._semantic_evaluator_requested = False
+            reset_production_semantic_evaluator_status()
+            logger.error("P2r1a-E semantic evaluator failed to start; disabled")
+
+    async def _ensure_semantic_evaluator(self) -> None:
+        """Retry an explicit binding once providers are ready, if needed."""
+        if not self._semantic_evaluator_requested or self._semantic_evaluator is not None:
+            return
+        self._init_semantic_evaluator()
+        await self._start_semantic_evaluator()
+        worker = self._semantic_evaluator
+        capture = self._p2r0_capture
+        if worker is not None and capture is not None:
+            bind = getattr(capture, "bind_semantic_authority_service", None)
+            if callable(bind):
+                bind(worker)
+            self._inbound_semantic_authority = worker
+
+    async def _retry_semantic_evaluator_after_provider_start(self) -> None:
+        """Retry one explicit binding after AstrBot finishes provider loading."""
+        try:
+            await asyncio.sleep(5)
+            await self._ensure_semantic_evaluator()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - startup boundary is fail-closed
+            logger.error("P2r1a-E semantic evaluator deferred binding failed")
 
     def _init_p2r0_archive_service(self) -> None:
         """Own one production P2a Run/snapshot + P2r0 archive store.
@@ -424,7 +529,16 @@ class IrisMemoryPlugin(Star):
     async def initialize(self) -> None:
         # 0. Episode/Outcome Shadow observation (fail-open).
         self._init_episode_shadow_observer()
-        # 0.1 P2r0 factual capture owns one replayed store.  It is independent
+        # 0.1 Bind/start the explicitly configured E1 evaluator.  Any failure
+        # leaves ordinary AstrBot and factual P2r0 capture running.
+        self._init_semantic_evaluator()
+        await self._start_semantic_evaluator()
+        if self._semantic_evaluator_requested and self._semantic_evaluator is None:
+            self._semantic_evaluator_retry_task = asyncio.create_task(
+                self._retry_semantic_evaluator_after_provider_start(),
+                name="p2r1a-e-provider-bind-retry",
+            )
+        # 0.2 P2r0 factual capture owns one replayed store.  It is independent
         # of Review/Archive wiring and has no in-memory fallback authority.
         self._init_p2r0_capture_service()
         self._init_p2r0_archive_service()
@@ -486,6 +600,21 @@ class IrisMemoryPlugin(Star):
     async def terminate(self):
         """插件卸载清理"""
         logger.info("开始关闭插件组件...")
+        if self._semantic_evaluator is not None:
+            try:
+                await self._semantic_evaluator.shutdown()
+            except Exception:
+                logger.exception("P2r1a-E semantic evaluator shutdown failed")
+            self._semantic_evaluator = None
+            self._production_semantic_evaluator = None
+            reset_production_semantic_evaluator_status()
+        if self._semantic_evaluator_retry_task is not None:
+            self._semantic_evaluator_retry_task.cancel()
+            try:
+                await self._semantic_evaluator_retry_task
+            except asyncio.CancelledError:
+                pass
+            self._semantic_evaluator_retry_task = None
         # 主动回复侧
         await self._proactive.stop()
         if self._save_task and not self._save_task.done():
@@ -858,6 +987,7 @@ class IrisMemoryPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_all_message(self, event: AstrMessageEvent) -> None:
         """记忆侧：全类型消息入 L1 缓冲、图片入队"""
+        await self._ensure_semantic_evaluator()
         capture = getattr(self, "_p2r0_capture", None)
         if capture is not None:
             try:
